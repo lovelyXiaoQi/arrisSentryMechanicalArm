@@ -1,0 +1,14 @@
+studio.json
+.*
+.claude
+!.gitignore
+!.gitmodules
+!.github
+work.mcscfg
+world_icon.jpeg
+world_behavior_packs.json
+world_resource_packs.json
+__pycache__/
+*.pyc
+/publish
+/pack

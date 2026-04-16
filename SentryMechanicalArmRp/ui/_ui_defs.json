@@ -1,0 +1,6 @@
+{
+    "ui_defs": [
+        "ui/createEquipGunUi.json",
+        "ui/hud_screen.json"
+    ]
+}

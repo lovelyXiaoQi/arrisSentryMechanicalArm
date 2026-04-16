@@ -1,0 +1,24 @@
+{
+    "format_version": "1.8.0",
+    "render_controllers": {
+        "controller.render.sentry_mechanical_arm": {
+            "geometry": "Geometry.default",
+            "materials": [
+                {
+                    "*": "Material.default"
+                },
+                {
+                    "cogwheel": "Material.rotate"
+                }
+            ],
+            "textures": [
+                "Texture.default"
+            ],
+            "part_visibility": [
+                {
+                    "goggles": "query.mod.arm_goggles"
+                }
+            ]
+        }
+    }
+}

@@ -1,0 +1,12 @@
+{
+    "create:sentry_mechanical_arm": {
+        "client_entity": {},
+        "sound": "stone"
+    },
+    "texture_name": "atlas.terrain",
+    "format_version": [
+        1,
+        1,
+        0
+    ]
+}

@@ -1,0 +1,101 @@
+{
+    "namespace": "createEquipGunUi",
+    "use_button_panel": {
+        "type": "panel",
+        "anchor_from": "bottom_middle",
+        "anchor_to": "bottom_middle",
+        "offset": [
+            0,
+            -45
+        ],
+        "size": [
+            "100%c+0px",
+            "100%c+0px"
+        ],
+        "layer": 1,
+        "controls": [
+            {
+                "use_button@common.button": {
+                    "$pressed_button_name": "#createEquipGunButton",
+                    "bindings": [
+                        {
+                            "binding_collection_name": "",
+                            "binding_condition": "always_when_visible",
+                            "binding_type": "collection_details"
+                        }
+                    ],
+                    "controls": [
+                        {
+                            "default": {
+                                "type": "image",
+                                "size": [
+                                    "100%sm+8px",
+                                    "100%sm+8px"
+                                ],
+                                "layer": 1,
+                                "nineslice_size": [
+                                    2,
+                                    2,
+                                    2,
+                                    4
+                                ],
+                                "texture": "textures/ui/create_btn_default"
+                            }
+                        },
+                        {
+                            "hover": {
+                                "type": "image",
+                                "size": [
+                                    "100%sm+8px",
+                                    "100%sm+8px"
+                                ],
+                                "layer": 1,
+                                "nineslice_size": [
+                                    2,
+                                    2,
+                                    2,
+                                    4
+                                ],
+                                "texture": "textures/ui/create_btn_hover"
+                            }
+                        },
+                        {
+                            "pressed": {
+                                "type": "image",
+                                "size": [
+                                    "100%sm+8px",
+                                    "100%sm+8px"
+                                ],
+                                "layer": 1,
+                                "nineslice_size": [
+                                    2,
+                                    2,
+                                    2,
+                                    2
+                                ],
+                                "texture": "textures/ui/create_btn_pressed"
+                            }
+                        },
+                        {
+                            "button_text": {
+                                "type": "label",
+                                "layer": 2,
+                                "font_type": "default",
+                                "shadow": true,
+                                "text": "装备枪械"
+                            }
+                        }
+                    ],
+                    "default_control": "default",
+                    "hover_control": "hover",
+                    "layer": 1,
+                    "pressed_control": "pressed",
+                    "size": [
+                        "100%cm+0px",
+                        "100%cm+0px"
+                    ]
+                }
+            }
+        ]
+    }
+}

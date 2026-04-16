@@ -1,0 +1,29 @@
+{
+  "format_version": "1.10.0",
+  "minecraft:client_entity": {
+    "description": {
+      "identifier": "create:sentry_mechanical_arm_model",
+      "materials": {
+        "default": "entity_alphatest_one_sided",
+        "rotate": "arris_rotate_up"
+      },
+      "textures": {
+        "default": "textures/arris_create/blocks/mechanical_arm_entity"
+      },
+      "geometry": {
+        "default": "geometry.sentry_mechanical_arm"
+      },
+      "animations": {
+        "cogwheel_offset": "animation.sentry_mechanical_arm.cogwheel_offset",
+        "ceiling": "animation.sentry_mechanical_arm.ceiling",
+        "pose": "animation.sentry_mechanical_arm.pose"
+      },
+      "scripts": {
+        "animate": ["cogwheel_offset", "ceiling", "pose"]
+      },
+      "render_controllers": [
+        "controller.render.sentry_mechanical_arm"
+      ]
+    }
+  }
+}

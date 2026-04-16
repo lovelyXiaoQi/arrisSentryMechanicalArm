@@ -1,0 +1,115 @@
+{
+    "format_version": "1.21.50",
+    "minecraft:block": {
+        "description": {
+            "identifier": "create:sentry_mechanical_arm",
+            "register_to_creative_menu": true,
+            "category": "create",
+            "states": {
+                "create:ceiling": [
+                    false,
+                    true
+                ],
+                "create:mode": [
+                    "item",
+                    "block"
+                ]
+            }
+        },
+        "permutations": [
+            {
+                "condition": "q.block_state('create:mode') == 'item'",
+                "components": {
+                    "minecraft:geometry": "geometry.sentry_mechanical_arm_item"
+                }
+            },
+            {
+                "condition": "q.block_state('create:mode') == 'block'",
+                "components": {
+                    "minecraft:geometry": "geometry.sentry_mechanical_arm_block"
+                }
+            },
+            {
+                "condition": "q.block_state('create:ceiling') == false",
+                "components": {
+                    "netease:aabb": {
+                        "collision": [
+                            { "min": [0.0, 0.0, 0.0], "max": [1.0, 0.375, 1.0] },
+                            { "min": [0.125, 0.375, 0.125], "max": [0.875, 0.625, 0.875] },
+                            { "min": [0.1875, 0.625, 0.1875], "max": [0.8125, 0.875, 0.8125] }
+                        ],
+                        "clip": { "min": [0.0, 0.0, 0.0], "max": [1.0, 0.875, 1.0] }
+                    }
+                }
+            },
+            {
+                "condition": "q.block_state('create:ceiling') == true",
+                "components": {
+                    "minecraft:transformation": {
+                        "rotation": [180, 0, 0]
+                    },
+                    "netease:aabb": {
+                        "collision": [
+                            { "min": [0.0, 0.625, 0.0], "max": [1.0, 1.0, 1.0] },
+                            { "min": [0.125, 0.375, 0.125], "max": [0.875, 0.625, 0.875] },
+                            { "min": [0.1875, 0.125, 0.1875], "max": [0.8125, 0.375, 0.8125] }
+                        ],
+                        "clip": { "min": [0.0, 0.125, 0.0], "max": [1.0, 1.0, 1.0] }
+                    }
+                }
+            }
+        ],
+        "components": {
+            "netease:custom_tips": {
+                "value": "§e温馨提示:\n  §7需要添加EP军工/机械动力后才能正常使用\n  手持EP枪械自动索敌附近敌对生物\n  使用普通动力臂进行装填子弹"
+            },
+            "netease:connection": {},
+            "netease:redstone": {
+                "type": "consumer",
+                "strength": 0
+            },
+            "netease:neighborchanged_sendto_script": {
+                "value": true
+            },
+            "tag:create:wrench_pickup": {},
+            "minecraft:destructible_by_mining": {
+                "seconds_to_destroy": 1.5
+            },
+            "minecraft:destructible_by_explosion": {
+                "explosion_resistance": 18
+            },
+            "minecraft:map_color": "#717171",
+            "minecraft:material_instances": {
+                "*": {
+                    "texture": "create:mechanical_arm"
+                },
+                "brass_block": {
+                    "texture": "create:brass_block"
+                },
+                "brass_casing": {
+                    "texture": "create:brass_casing"
+                },
+                "flywheel": {
+                    "texture": "create:flywheel"
+                },
+                "elevator_pulley": {
+                    "texture": "create:elevator_pulley"
+                }
+            },
+            "minecraft:light_dampening": 0,
+            "netease:tier": {
+                "destroy_special": true,
+                "digger": "pickaxe",
+                "level": 0
+            },
+            "netease:block_entity": {
+                "client_tick": false,
+                "movable": false,
+                "tick": false
+            },
+            "netease:listen_block_remove": {
+                "value": true
+            }
+        }
+    }
+}

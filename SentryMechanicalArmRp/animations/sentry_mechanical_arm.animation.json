@@ -1,0 +1,44 @@
+{
+    "format_version": "1.8.0",
+    "animations": {
+        "animation.sentry_mechanical_arm.cogwheel_offset": {
+            "loop": true,
+            "bones": {
+                "cogwheel": {
+                    "rotation": [0, "-query.mod.arm_z_rotation", 0]
+                }
+            }
+        },
+        "animation.sentry_mechanical_arm.ceiling": {
+            "loop": true,
+            "bones": {
+                "core": {
+                    "rotation": ["query.mod.arm_ceiling * 180", 0, 0]
+                }
+            }
+        },
+        "animation.sentry_mechanical_arm.pose": {
+            "loop": true,
+            "bones": {
+                "base": {
+                    "rotation": [0, "query.mod.arm_base_angle", 0]
+                },
+                "lower_body": {
+                    "rotation": ["-query.mod.arm_lower_angle", 0, 0]
+                },
+                "upper_body": {
+                    "rotation": ["-query.mod.arm_upper_angle", 0, 0]
+                },
+                "claw_base": {
+                    "rotation": ["query.mod.arm_claw_angle", 0, 0]
+                },
+                "upper_claw_grip": {
+                    "position": ["query.mod.arm_claw_grip == 2 ? 3 : (query.mod.arm_claw_grip == 1 ? 1.25 : 0)", 0, 0]
+                },
+                "lower_claw_grip": {
+                    "position": ["-(query.mod.arm_claw_grip == 2 ? 3 : (query.mod.arm_claw_grip == 1 ? 1.25 : 0))", 0, 0]
+                }
+            }
+        }
+    }
+}
