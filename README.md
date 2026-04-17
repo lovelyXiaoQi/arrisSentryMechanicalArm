@@ -6,6 +6,12 @@
 
 > 作者: 棱花 Arris - lovely_小柒丫
 > 版本: 0.0.1
+>
+> **本项目同时是 arrisCreate 扩展 API 的官方示例**
+> 服务端入口 [ModServerSystem.py](SentryMechanicalArmBp/sentryMechanicalArmScripts/Content/Server/ModServerSystem.py) 展示了 `Api.ExtensionApi` 的完整用法：
+> `registerBlock` / `@registerComponent` / `arris.Component` / `arris.Field` / `onServerConfigFrozen` / 降级处理。
+> 配套文档见主 mod 仓库的 `docs/EXTENSION-API.md`。
+
 ---
 
 ## 项目定位
@@ -117,20 +123,45 @@ arrisSentryMechanicalArm/
 | `ammoReserve` | int | 备用弹药储量 | O | O |
 | `bulletType` | str | 接受的弹药物品 ID | O | O |
 
-初始化时通过主包 `SetCreateBlockInitComponents` 一并注入 `SixFacing` / `Network` / `RPM` / `StressConsumer` / `CogwheelType`。
+初始化时通过主包 `Api.ExtensionApi.registerBlock(...)` 一并注入 `SixFacing` / `Network` / `RPM` / `StressConsumer` / `CogwheelType` + 自定义 `SentryArmComponent`。
 
 ---
 
 ## 与主包的集成点
 
+分两类：**推荐走公共 API** 和**主 mod 内部路径**（后者未来可能 rename，目前路径稳定）。
+
+### 公共 API — `arrisCreateScripts.Api.ExtensionApi`（Phase A/B）
+
+| 用法 | 用途 |
+| --- | --- |
+| `arris.registerBlock(blockName, components=[...])` | 方块的 ECS 组件配置（取代旧版 `SetCreateBlockInitComponents`） |
+| `@arris.registerComponent` + `arris.Component` / `arris.Field` | 定义 `SentryArmComponent` 并挂到主 mod World 注册表 |
+| `arris.onServerConfigFrozen(_doRegister)` | 兜底：所有 mod 加载完毕后重试注册 |
+
+### 稳定 Component 路径（EXTENSION-API.md "稳定 Component 清单"）
+
+| 模块 | 用途 |
+| --- | --- |
+| `...Content.Shared.Components.FacingComponent` | `SixFacingComponent` |
+| `...Content.Shared.Components.NetworkComponent` | `NetworkComponent` |
+| `...Content.Shared.Components.RPMComponent` | `RPMComponent` |
+| `...Content.Shared.Components.StressConsumerComponent` | `StressConsumerComponent(3)` — 3 SU/RPM |
+| `...Content.Shared.Components.CogwheelTypeComponent` | `CogwheelTypeComponent(CogSize.SMALL)` |
+
+### 主 mod 内部路径（可用但非公共承诺）
+
 | 集成方式 | 模块 | 用途 |
 | --- | --- | --- |
-| `serverApi.ImportModule` | `arrisCreateScripts.Content.Shared.World` | 动态注册 ECS 组件 |
-| `SetCreateBlockInitComponents` | `...Shared.Config.CreateConfig` | 批量挂载基础组件 |
-| `RuntimePointRegistry.registerRuntimePoint` | `...Server.Helpers.RuntimePointRegistry` | 让普通动力臂识别哨戒臂为 "take_deposit" 类型交互点 |
-| `PlacementRulesMeta._registry` | `...Server.Placements.Server` | 顶/底面放置规则 |
+| `Registry.registerBlockType` / `registerRuntimePoint` | `...Server.Helpers.RuntimePointRegistry` | 让普通动力臂识别哨戒臂为 "take_deposit" 交互点 |
+| `PlacementRulesMeta._registry` | `...Server.Placements.Server` | 顶/底面放置规则（主 mod 未来可能提供公开 API） |
 | `EventRegistry("BlockRemoveServerEvent")` | `...Server.EventRegistry` | 方块破坏时掉落武器 |
 | `RotationRenderSystem._rotationOffset` | `...Client.Systems.RotationRenderSystem` | 齿轮 22.5° 对齐旋转 |
+
+### EP 军工
+
+| 集成方式 | 模块 | 用途 |
+| --- | --- | --- |
 | `GetEplisItemData` | `EpJxkScriptClientSystem` | 读取配件加成后的完整枪械属性 |
 | `epApiServer.Shoot` | `EpJxkScript.Api.EpApiServer` | 服务端权威发射 |
 
