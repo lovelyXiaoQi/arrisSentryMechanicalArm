@@ -12,7 +12,7 @@ ModClientSystem - 哨戒机械臂客户端入口
 import math
 import time
 
-from ...QuModLibs.Client import Listen, clientApi, playerId
+from ...QuModLibs.Client import AllowCall, Call, Listen, clientApi
 
 # 导入交互模块（触发 @Listen("OnScriptTickClient") 准星检测注册）
 from . import SentryArmInteraction as _sentryInteraction  # noqa: F401
@@ -21,9 +21,95 @@ SENTRY_ARM_BLOCK = "create:sentry_mechanical_arm"
 SENTRY_ARM_ENTITY = "create:sentry_mechanical_arm_model"
 
 _MAIN_PACK = "arrisCreateScripts"
+_EP_PACK = "EpJxkScript"
 
 compFactory = clientApi.GetEngineCompFactory()
 levelId = clientApi.GetLevelId()
+
+
+@AllowCall
+def sentryArmPlayReloadSound(soundName, x, y, z, dimensionId):
+    # type: (str, float, float, float, int) -> None
+    """服务端广播装填音效 → 本地客户端用 PlayCustomMusic 播放（绝对世界坐标）"""
+    if not soundName:
+        return
+    if dimensionId != compFactory.CreateGame(levelId).GetCurrentDimension():
+        return  # 不在同一维度，忽略
+    compFactory.CreateCustomAudio(levelId).PlayCustomMusic(soundName, (x, y, z), 1.0, 1.0, False, None)
+
+
+@AllowCall
+def sentryArmFetchGunInfo(entityId, itemName, customTips, extraId):
+    # type: (str, str, str, str) -> None
+    """
+    服务端请求完整枪械数据（含配件加成）。
+    本地客户端走 EP 的 GetEplisItemData 拿到真实 reloadSound/shootSound/damage 等字段，
+    扁平化后 Call 回报服务端 sentryArmReportGunInfo。
+    """
+    if not itemName:
+        return
+    epSystem = clientApi.GetSystem(_EP_PACK, "EpJxkScriptClientSystem")
+    if not epSystem or not hasattr(epSystem, "GetEplisItemData"):
+        return
+    try:
+        allData = epSystem.GetEplisItemData(
+            {
+                "newItemName": itemName,
+                "customTips": customTips or "",
+                "extraId": extraId or "",
+            }
+        )
+    except Exception:
+        return
+    if not allData or "data" not in allData:
+        return
+
+    d = allData["data"]
+    shootSound = d.get("shootSound", [])
+    shootSoundX = d.get("shootSoundX", [])
+    hasShootX = d.get("shootX", False)
+    soundList = shootSoundX if hasShootX and shootSoundX else shootSound
+
+    # reloadSound 在 GetEplisItemData 的配件加成路径里会被覆盖成 ['', '']。
+    # 兜底：从未经配件处理的 EpApiClient.GetGunInfo 读原始 JSON 值。
+    reloadSound = d.get("reloadSound", [])
+    if not reloadSound or all(not s for s in reloadSound):
+        try:
+            from EpJxkScript.Api.EpApiClient import epApiClient as _epApiClient
+
+            if _epApiClient:
+                rawInfo = _epApiClient.GetGunInfo(itemName)
+                if rawInfo:
+                    reloadSound = rawInfo.get("reloadSound", []) or reloadSound
+        except Exception:
+            pass
+
+    gunInfo = {
+        "name": itemName,
+        "damage": d.get("danger", 0),
+        "fireSpeed": d.get("fireSpeed", 4),
+        "boltSpeed": d.get("boltSpeed", 0),
+        "shootCount": d.get("shootCount", 1),
+        "fireType": d.get("fireType", 0),
+        "magazine": d.get("magazine", 30),
+        "reloadEmptyTick": d.get("reloadEmptyTick", 2.0),
+        "reloadTacticalTick": d.get("reloadTacticalTick", 2.0),
+        "dangerType": d.get("dangerType", "projectile"),
+        "reloadSound": reloadSound,
+        "bulletSpeed": d.get("bulletSpeed", 100),
+        "useBullet": d.get("useBullet", ""),
+        "count": d.get("count", 1),
+        "spread": d.get("spread", 0),
+        "distance": d.get("distance", 100),
+        "crit": d.get("crit", 0),
+        "critDamage": d.get("critDabger", 1.5),
+        "shootSound": soundList,
+        "fireFlash": d.get("fire_flash", ""),
+        "hitPartic": d.get("hitPartic", ""),
+        "fireParts": d.get("fireParts", ""),
+    }
+    Call("sentryArmReportGunInfo", entityId, gunInfo)
+
 
 # 注册 HUD 代理（附属包的按钮面板已通过 hud_screen.json modifications 注入到 HUD）
 NativeScreenManager = clientApi.GetNativeScreenManagerCls()

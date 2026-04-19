@@ -9,7 +9,7 @@ SentryArmTargeting - 哨戒臂目标扫描 + 瞄准 + 射击（服务端）
 
 import math
 
-from ...QuModLibs.Server import serverApi
+from ...QuModLibs.Server import AllowCall, Call, serverApi
 
 SENTRY_ARM_BLOCK = "create:sentry_mechanical_arm"
 _MAIN_PACK = "arrisCreateScripts"
@@ -47,6 +47,69 @@ def _collectHostileMasks():
 
 
 _HOSTILE_MASKS = _collectHostileMasks()
+
+_RayFilterType = serverApi.GetMinecraftEnum().RayFilterType
+
+# 射线穿透白名单：植物 / 树苗 / 珊瑚 / 液体 / 藤蔓 / 泡泡柱 / 细雪等非实体阻挡方块。
+# EpApiServer.Shoot 已改为 OnlyEntities 过滤（不再判定方块命中），阻挡判定完全由此处 LOS 兜底。
+# 即：只要目标和枪口之间没有"非此列表的方块"，哨戒臂就会开火并稳定造成伤害。
+_RAY_PASSTHROUGH_BLOCKS = frozenset(
+    [
+        "minecraft:fern",
+        "minecraft:large_fern",
+        "minecraft:short_grass",
+        "minecraft:tall_grass",
+        "minecraft:short_dry_grass",
+        "minecraft:tall_dry_grass",
+        "minecraft:bush",
+        "minecraft:nether_sprouts",
+        "minecraft:fire_coral",
+        "minecraft:brain_coral",
+        "minecraft:bubble_coral",
+        "minecraft:tube_coral",
+        "minecraft:horn_coral",
+        "minecraft:dead_fire_coral",
+        "minecraft:dead_brain_coral",
+        "minecraft:dead_bubble_coral",
+        "minecraft:dead_tube_coral",
+        "minecraft:dead_horn_coral",
+        "minecraft:coral_fan",
+        "minecraft:coral_fan_dead",
+        "minecraft:crimson_roots",
+        "minecraft:warped_roots",
+        "minecraft:yellow_flower",
+        "minecraft:red_flower",
+        "minecraft:double_plant",
+        "minecraft:pitcher_plant",
+        "minecraft:pink_petals",
+        "minecraft:wildflowers",
+        "minecraft:wither_rose",
+        "minecraft:torchflower",
+        "minecraft:cactus_flower",
+        "minecraft:closed_eyeblossom",
+        "minecraft:open_eyeblossom",
+        "minecraft:vine",
+        "minecraft:weeping_vines",
+        "minecraft:twisting_vines",
+        "minecraft:seagrass",
+        "minecraft:flowing_water",
+        "minecraft:water",
+        "minecraft:flowing_lava",
+        "minecraft:lava",
+        "minecraft:bubble_column",
+        "minecraft:powder_snow",
+        # 树苗
+        "minecraft:oak_sapling",
+        "minecraft:spruce_sapling",
+        "minecraft:birch_sapling",
+        "minecraft:jungle_sapling",
+        "minecraft:acacia_sapling",
+        "minecraft:dark_oak_sapling",
+        "minecraft:mangrove_propagule",
+        "minecraft:cherry_sapling",
+        "minecraft:pale_oak_sapling",
+    ]
+)
 
 # 缓存
 _scanCooldowns = {}  # ecsEntityId -> remainingTicks
@@ -227,10 +290,7 @@ def _tickShooting(entity, comp):
         return  # 还没瞄准到位，等下一 tick
 
     # 获取枪械信息（武器名变化时强制刷新，支持运行时换枪）
-    gunInfo = _gunInfoCache.get(entity.id)
-    if not gunInfo or gunInfo.get("name") != comp.weaponItemName:
-        _cacheGunInfo(entity.id, comp)
-        gunInfo = _gunInfoCache.get(entity.id)
+    gunInfo = _getOrCacheGunInfo(entity, comp)
     if not gunInfo:
         return
 
@@ -259,12 +319,15 @@ def _tickShooting(entity, comp):
     if not api:
         return
 
-    # 枪口位置（对齐客户端 _updateAimAngles：ceiling 时枪口在方块底部附近）
-    pos = entity.blockPos
-    facingComp = entity.getComponent("SixFacingComponent")
-    ceiling = facingComp and facingComp.facing == 0
-    armY = pos[1] + 0.5 + (-1.0 if ceiling else 1.0)
-    shooterPos = (pos[0] + 0.5, armY, pos[2] + 0.5)
+    # 射线检查：目标被实体方块遮挡 → 放弃当前目标重回 SCANNING
+    if not _hasLineOfSight(entity, targetPos):
+        comp.state = SCANNING
+        comp.hasTarget = False
+        _trackedTargets.pop(entity.id, None)
+        _fireCooldowns.pop(entity.id, None)
+        return
+
+    shooterPos = _computeMuzzle(entity)
     api.Shoot(
         shooterPos=shooterPos,
         targetPos=targetPos,
@@ -338,7 +401,7 @@ def _tickCooldown(entity, comp):
     if int(comp.currentMagazine or 0) <= 0:
         reserve = int(comp.ammoReserve or 0)
         if reserve > 0:
-            gunInfo = _gunInfoCache.get(eid)
+            gunInfo = _getOrCacheGunInfo(entity, comp)
             magCap = max(1, int(gunInfo.get("magazine", 30))) if gunInfo else 30
             transfer = min(magCap, reserve)
             comp.currentMagazine = transfer
@@ -368,7 +431,7 @@ def _tickWaitingAmmo(entity, comp):
     """弹匣空 + 库存空：不动，等动力臂补弹。有货即转 SCANNING（带换弹冷却 + 音效）"""
     if int(comp.ammoReserve or 0) > 0:
         # 有货 → 先从库存补弹匣，再进入换弹冷却（不立刻 SCANNING，保持上弹动画/音效感）
-        gunInfo = _gunInfoCache.get(entity.id)
+        gunInfo = _getOrCacheGunInfo(entity, comp)
         magCap = max(1, int(gunInfo.get("magazine", 30))) if gunInfo else 30
         transfer = min(magCap, int(comp.ammoReserve))
         comp.currentMagazine = transfer
@@ -442,7 +505,12 @@ def _isAimAligned(entity, targetPos):
 
 def _playReloadSound(entity, gunInfo):
     # type: (object, dict) -> None
-    """换弹音效：播放 reloadSound[1]（空弹换弹），fallback reloadSound[0]"""
+    """
+    换弹音效：播放 reloadSound[1]（空弹换弹），fallback reloadSound[0]。
+
+    EP 的 reloadSound 是 CustomAudio 注册的自定义事件，服务端 /playsound 找不到；
+    所以走 QuMod 的 server→client Call 广播 → 客户端 PlayCustomMusic 播放。
+    """
     if not gunInfo:
         return
     sounds = gunInfo.get("reloadSound", [])
@@ -452,84 +520,71 @@ def _playReloadSound(entity, gunInfo):
     if not soundName:
         return
     pos = entity.blockPos
-    try:
-        compFactory.CreateCommand(levelId).SetCommand(
-            "playsound {} @a {} {} {} 1.0 1.0 32".format(
-                soundName, pos[0] + 0.5, pos[1] + 0.5, pos[2] + 0.5
-            )
-        )
-    except Exception:
-        pass
+    dimensionId = entity.dimensionId
+    cx, cy, cz = pos[0] + 0.5, pos[1] + 0.5, pos[2] + 0.5
+    Call("*", "sentryArmPlayReloadSound", soundName, cx, cy, cz, dimensionId)
+
+
+_gunInfoRequestTimes = {}  # entityId -> last broadcast timestamp（避免每 tick 狂发请求）
+_GUN_INFO_REQUEST_COOLDOWN = 1.0  # 秒
 
 
 def _cacheGunInfo(entityId, comp):
     # type: (str, object) -> None
     """
-    缓存枪械信息。
-    通过 Eplus 客户端系统的 GetEplisItemData 获取配件加成后的完整数据
-    （包含正确的 shootSound/damage/spread 等）。
+    向所有客户端广播请求：本地 EP 客户端系统算出含配件加成的完整枪械数据，
+    再通过 sentryArmReportGunInfo RPC 回报到服务端。落入 _gunInfoCache[entityId]。
+
+    异步：首次调用只发请求；实际 cache 会在 1~2 tick 内就位。
+    tick 路径对 cache 未命中做 early-return，等到就位再继续。
     """
     weaponName = comp.weaponItemName
     if not weaponName:
         return
 
-    # 构造 itemDict（对齐 GetEplisItemData 的输入格式）
-    itemDict = {
-        "newItemName": weaponName,
-        "customTips": comp.weaponCustomTips or "",
-        "extraId": comp.weaponExtraId or "",
-    }
+    import time
 
-    # 通过 Eplus 客户端系统获取完整枪械数据（含配件加成）
-    import mod.client.extraClientApi as clientApi
-
-    epSystem = clientApi.GetSystem(_EP_PACK, "EpJxkScriptClientSystem")
-    if not epSystem:
-        # fallback: 用 EpApiClient.GetGunInfo（无配件加成）
-        mod = serverApi.ImportModule(_EP_PACK + ".Api.EpApiClient")
-        if mod:
-            instance = getattr(mod, "epApiClient", None)
-            if instance:
-                info = instance.GetGunInfo(weaponName)
-                if info:
-                    _gunInfoCache[entityId] = info
+    now = time.time()
+    last = _gunInfoRequestTimes.get(entityId, 0.0)
+    if now - last < _GUN_INFO_REQUEST_COOLDOWN:
         return
+    _gunInfoRequestTimes[entityId] = now
 
-    allData = epSystem.GetEplisItemData(itemDict)
-    if not allData or "data" not in allData:
+    try:
+        from ...QuModLibs.Server import Call
+
+        Call(
+            "*",
+            "sentryArmFetchGunInfo",
+            entityId,
+            weaponName,
+            comp.weaponCustomTips or "",
+            str(comp.weaponExtraId or ""),
+        )
+    except Exception:
+        pass
+
+
+@AllowCall
+def sentryArmReportGunInfo(entityId, gunInfo):
+    # type: (str, dict) -> None
+    """客户端回报枪械数据 → 写入服务端 cache。"""
+    if not isinstance(gunInfo, dict) or not gunInfo.get("name"):
         return
+    _gunInfoCache[entityId] = gunInfo
 
-    d = allData["data"]
-    shootSound = d.get("shootSound", [])
-    shootSoundX = d.get("shootSoundX", [])
-    hasShootX = d.get("shootX", False)
-    # 使用消音版音效（如果有）
-    soundList = shootSoundX if hasShootX and shootSoundX else shootSound
 
-    _gunInfoCache[entityId] = {
-        "name": weaponName,
-        "damage": d.get("danger", 0),
-        "fireSpeed": d.get("fireSpeed", 4),
-        "boltSpeed": d.get("boltSpeed", 0),
-        "shootCount": d.get("shootCount", 1),
-        "fireType": d.get("fireType", 0),
-        "magazine": d.get("magazine", 30),
-        "reloadEmptyTick": d.get("reloadEmptyTick", 2.0),  # 秒
-        "reloadTacticalTick": d.get("reloadTacticalTick", 2.0),  # 秒
-        "dangerType": d.get("dangerType", "projectile"),  # 配件特殊弹种（如 fire）
-        "reloadSound": d.get("reloadSound", []),  # [tactical, empty] 换弹音效
-        "bulletSpeed": d.get("bulletSpeed", 100),
-        "useBullet": d.get("useBullet", ""),
-        "count": d.get("count", 1),
-        "spread": d.get("spread", 0),
-        "distance": d.get("distance", 100),
-        "crit": d.get("crit", 0),
-        "critDamage": d.get("critDabger", 1.5),
-        "shootSound": soundList,
-        "fireFlash": d.get("fire_flash", ""),
-        "hitPartic": d.get("hitPartic", ""),  # 命中特效（爆炸弹/龙息弹等，配件加成后值）
-        "fireParts": d.get("fireParts", ""),  # 弹道特效（龙息弹等）
-    }
+def _getOrCacheGunInfo(entity, comp):
+    # type: (object, object) -> dict | None
+    """
+    取 _gunInfoCache，缺失或武器名变了就当场补填。
+    tick 路径统一用这个拿 gunInfo，避免 cache 未命中时静默丢失 reloadSound 等字段。
+    """
+    gunInfo = _gunInfoCache.get(entity.id)
+    if not gunInfo or gunInfo.get("name") != comp.weaponItemName:
+        _cacheGunInfo(entity.id, comp)
+        gunInfo = _gunInfoCache.get(entity.id)
+    return gunInfo
 
 
 def _isInRange(entity, comp, targetPos):
@@ -541,6 +596,65 @@ def _isInRange(entity, comp, targetPos):
     dz = targetPos[2] - armCenter[2]
     maxDist = comp.scanRange + 2
     return dx * dx + dy * dy + dz * dz <= maxDist * maxDist
+
+
+def _computeMuzzle(entity):
+    # type: (object) -> tuple
+    """枪口世界坐标（与 api.Shoot / 客户端 _updateAimAngles 一致：ceiling 时枪口在方块下方）"""
+    pos = entity.blockPos
+    facingComp = entity.getComponent("SixFacingComponent")
+    ceiling = facingComp and facingComp.facing == 0
+    armY = pos[1] + 0.5 + (-1.0 if ceiling else 1.0)
+    return (pos[0] + 0.5, armY, pos[2] + 0.5)
+
+
+def _hasLineOfSight(entity, targetPos):
+    # type: (object, tuple) -> bool
+    """
+    枪口 → 目标的射线检测。
+    用 serverApi.getEntitiesOrBlockFromRay(OnlyBlocks, isThrough=True) 取沿途全部方块，
+    跳过自身哨戒臂方块 + _RAY_PASSTHROUGH_BLOCKS 中的植物/液体，首个"实心"阻挡判距离。
+    障碍物在目标之后 → 视为通路。
+    """
+    muzzle = _computeMuzzle(entity)
+    dx = targetPos[0] - muzzle[0]
+    dy = targetPos[1] - muzzle[1]
+    dz = targetPos[2] - muzzle[2]
+    distSq = dx * dx + dy * dy + dz * dz
+    if distSq < 0.25:  # 距离 < 0.5
+        return True
+    dist = math.sqrt(distSq)
+    direction = (dx / dist, dy / dist, dz / dist)
+    rayLen = int(math.ceil(dist)) + 1
+
+    hits = serverApi.getEntitiesOrBlockFromRay(
+        int(entity.dimensionId),
+        muzzle,
+        direction,
+        rayLen,
+        True,  # isThrough: 拿到全部 hits，才能跳过自身/透明再判剩下的
+        _RayFilterType.OnlyBlocks,
+    )
+    if not hits:
+        return True
+
+    selfBlockPos = tuple(entity.blockPos)
+    for hit in hits:
+        blockPos = hit.get("pos")
+        if blockPos and tuple(blockPos) == selfBlockPos:
+            continue
+        name = hit.get("identifier", "")
+        if name in _RAY_PASSTHROUGH_BLOCKS:
+            continue
+        hitPos = hit.get("hitPos")
+        if hitPos:
+            hx = hitPos[0] - muzzle[0]
+            hy = hitPos[1] - muzzle[1]
+            hz = hitPos[2] - muzzle[2]
+            if hx * hx + hy * hy + hz * hz >= distSq:
+                return True  # 首个实心障碍在目标之后 → 视线通畅
+        return False
+    return True
 
 
 def _findNearestHostile(entity, scanRange):
@@ -556,8 +670,7 @@ def _findNearestHostile(entity, scanRange):
         return None
 
     armCenter = (pos[0] + 0.5, pos[1] + 0.5, pos[2] + 0.5)
-    bestEntity = None
-    bestDistSq = float("inf")
+    candidates = []  # [(distSq, eid)]
 
     for eid in entityIds:
         typeComp = compFactory.CreateEngineType(eid)
@@ -577,12 +690,20 @@ def _findNearestHostile(entity, scanRange):
         dx = ePos[0] - armCenter[0]
         dy = ePos[1] - armCenter[1]
         dz = ePos[2] - armCenter[2]
-        distSq = dx * dx + dy * dy + dz * dz
-        if distSq < bestDistSq:
-            bestDistSq = distSq
-            bestEntity = eid
+        candidates.append((dx * dx + dy * dy + dz * dz, eid))
 
-    return bestEntity
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda c: c[0])
+    # 由近到远 LOS 检查，第一个可见的即为目标；全被遮挡则放弃本轮扫描
+    for _, eid in candidates:
+        targetCenter = _getEntityCenter(eid)
+        if not targetCenter:
+            continue
+        if _hasLineOfSight(entity, targetCenter):
+            return eid
+    return None
 
 
 def _isEntityAlive(entityId):

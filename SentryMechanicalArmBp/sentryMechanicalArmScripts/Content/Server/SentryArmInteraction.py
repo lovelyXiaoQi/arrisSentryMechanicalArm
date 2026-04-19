@@ -9,6 +9,7 @@ SentryArmInteraction - 哨戒臂枪械装备交互（服务端）
 
 from ...QuModLibs.Server import AllowCall, InjectHttpPlayerId, regModLoadFinishHandler, serverApi
 from ...QuModLibs.Server import System as GameSystem
+from .SentryArmRuntimePoint import SentryArmRuntimePoint
 
 SENTRY_ARM_BLOCK = "create:sentry_mechanical_arm"
 _MAIN_PACK = "arrisCreateScripts"
@@ -103,6 +104,18 @@ def equipGunToSentry(playerId, data):
         # 空手 → 取出枪械
         if comp.weaponItemName:
             _removeWeapon(comp, playerId, itemComp)
+        return
+
+    # 3.5 手持子弹匹配已装备枪械的 bulletType → 装填备弹
+    if comp.weaponItemName and comp.bulletType and itemName == comp.bulletType:
+        heldCount = int(carriedItem.get("count", 0) or 0)
+        if heldCount <= 0:
+            return
+        itemDict = {"newItemName": itemName, "newAuxValue": 0, "count": heldCount}
+        accepted = SentryArmRuntimePoint().insert(blockPos, dimensionId, itemDict, simulate=False)
+        if accepted > 0:
+            selectSlot = itemComp.GetSelectSlotId()
+            itemComp.SetInvItemNum(selectSlot, heldCount - accepted)
         return
 
     # 4. 验证是枪械（服务端权威校验，防客户端篡改）

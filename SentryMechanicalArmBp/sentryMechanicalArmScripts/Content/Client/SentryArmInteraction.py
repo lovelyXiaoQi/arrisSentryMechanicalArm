@@ -99,13 +99,18 @@ def _onTickCheckCrosshair(args=None):
     sentryComp = _getSentryComp(blockPos)
     hasWeapon = bool(sentryComp and sentryComp.weaponItemName)
 
-    # 主提示：装/取枪
+    # 主提示：装枪 / 装填子弹 / 取枪
+    bulletType = sentryComp.bulletType if sentryComp else ""
+    canLoadAmmo = bool(itemName and hasWeapon and bulletType and itemName == bulletType)
+
     if itemName and _isGunClient(itemName):
         text = "[K]装备枪械"
+    elif canLoadAmmo:
+        text = "[K]装填子弹"
     elif not itemName and hasWeapon:
         text = "[K]取出枪械"
     else:
-        # 非枪械且非空手取出场景 → 不显示
+        # 非枪械且非空手取出且非匹配子弹 → 不显示
         if _lastTargetPos is not None:
             proxy.hideButton()
             _lastTargetPos = None
@@ -136,13 +141,6 @@ def _getSentryComp(blockPos):
     if not entity:
         return None
     return entity.getComponent("SentryArmComponent")
-
-
-def _checkSentryHasWeapon(blockPos):
-    # type: (tuple) -> bool
-    """检查哨戒臂 ECS 是否已装备武器（给按键 handler 用）"""
-    comp = _getSentryComp(blockPos)
-    return bool(comp and comp.weaponItemName)
 
 
 # ==================== 自定义按键：装备/取出枪械 ====================
@@ -195,15 +193,19 @@ def _onSentryKeyPress(args):
     if blockName != SENTRY_ARM_BLOCK:
         return
 
-    # 手持枪械 or 空手哨戒臂有武器时才响应（服务端会再校验一次）
+    # 手持枪械 / 空手哨戒臂有武器 / 手持匹配子弹时才响应（服务端会再校验一次）
     itemComp = compFactory.CreateItem(playerId)
     carriedItem = itemComp.GetPlayerItem(clientApi.GetMinecraftEnum().ItemPosType.CARRIED, 0, True)
     itemName = carriedItem.get("newItemName", "") if carriedItem else ""
-    hasWeapon = _checkSentryHasWeapon(blockPos)
+
+    sentryComp = _getSentryComp(blockPos)
+    hasWeapon = bool(sentryComp and sentryComp.weaponItemName)
+    bulletType = sentryComp.bulletType if sentryComp else ""
 
     canEquip = itemName and _isGunClient(itemName)
     canTake = not itemName and hasWeapon
-    if not (canEquip or canTake):
+    canLoadAmmo = bool(itemName and hasWeapon and bulletType and itemName == bulletType)
+    if not (canEquip or canTake or canLoadAmmo):
         return
 
     # 触发服务端 RPC
