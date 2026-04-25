@@ -74,15 +74,10 @@ def sentryArmFetchGunInfo(entityId, itemName, customTips, extraId):
     # 兜底：从未经配件处理的 EpApiClient.GetGunInfo 读原始 JSON 值。
     reloadSound = d.get("reloadSound", [])
     if not reloadSound or all(not s for s in reloadSound):
-        try:
-            from EpJxkScript.Api.EpApiClient import epApiClient as _epApiClient
-
-            if _epApiClient:
-                rawInfo = _epApiClient.GetGunInfo(itemName)
-                if rawInfo:
-                    reloadSound = rawInfo.get("reloadSound", []) or reloadSound
-        except Exception:
-            pass
+        mod = clientApi.ImportModule(_EP_PACK + ".Api.EpApiClient")
+        rawInfo = mod.GetGunInfo(itemName)
+        if rawInfo:
+            reloadSound = rawInfo.get("reloadSound", []) or reloadSound
 
     gunInfo = {
         "name": itemName,
