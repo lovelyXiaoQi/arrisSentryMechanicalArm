@@ -30,14 +30,23 @@ WAITING_AMMO = 5  # 弹匣空 + 库存空，等动力臂补弹
 # 扫描间隔（tick）
 SCAN_INTERVAL = 10
 
-# 敌对实体分类（EntityType 位掩码 OR 组合，覆盖原版 + 模组怪物）
-# 用 GetEngineType() & mask == mask 判断实体是否属于某类
+# 敌对实体分类（EntityType 位掩码）
+# NetEase EntityType 是层次化位掩码：低 8 位 = 实体唯一 ID，高位 = 分类（Mob/Monster/...）。
+# 用 (engType & mask) == mask 判断实体是否属于该分类（含其所有子类）。
 _ETEnum = serverApi.GetMinecraftEnum().EntityType
+_AttrType = serverApi.GetMinecraftEnum().AttrType
 
 
 def _collectHostileMasks():
-    """收集可用的 EntityType 位掩码。部分位在旧 SDK 可能不存在，用 getattr 兜底"""
-    names = ("Monster", "Hostile", "Undead", "Zombie", "Skeleton", "Arthropod")
+    """
+    分类掩码：Monster 已含 PathfinderMob | Mob 三层位，覆盖几乎所有原版 + 模组怪物
+    （ZombieMonster / UndeadMob / SkeletonMonster / Arthropod 都从 Monster 派生）。
+    Arthropod 显式列出冗余但便于阅读。
+
+    注：故意不收 Piglin / PiglinBrute / Hoglin 这类中立怪 —— 它们不主动攻击玩家，
+    哨戒臂也不应主动锁定。
+    """
+    names = ("Monster", "Arthropod", "UndeadMob", "ZombieMonster", "SkeletonMonster")
     masks = []
     for name in names:
         mask = getattr(_ETEnum, name, None)
@@ -679,10 +688,13 @@ def _findNearestHostile(entity, scanRange):
         engType = typeComp.GetEngineType()
         if engType is None:
             continue
-        # 位掩码 OR 组合：Monster/Hostile/Undead/Zombie/Skeleton/Arthropod 任一命中
+        # 敌对判定：分类掩码 (Monster/Arthropod) 命中即视为敌对
         if not any((engType & m) == m for m in _HOSTILE_MASKS):
             continue
         if not _isEntityAlive(eid):
+            continue
+        # SPEED == 0 通常是 mod 的"尸体"残留（免伤打不死），跳过
+        if not _isMovable(eid):
             continue
         ePos = compFactory.CreatePos(eid).GetFootPos()
         if not ePos:
@@ -711,8 +723,22 @@ def _isEntityAlive(entityId):
     attrComp = compFactory.CreateAttr(entityId)
     if not attrComp:
         return False
-    health = attrComp.GetAttrValue(0)
+    health = attrComp.GetAttrValue(_AttrType.HEALTH)
     return health is not None and health > 0
+
+
+def _isMovable(entityId):
+    # type: (str) -> bool
+    """
+    SPEED 属性 > 0 才视为可被攻击的活体目标。
+    某些模组在生物倒地后会留下"尸体"实体，免疫一切伤害但仍在世界里 ——
+    它们的 SPEED 通常被改成 0。哨戒臂不应在它们身上浪费弹药。
+    """
+    attrComp = compFactory.CreateAttr(entityId)
+    if not attrComp:
+        return False
+    speed = attrComp.GetAttrValue(_AttrType.SPEED)
+    return speed is not None and speed > 0
 
 
 def _getEntityCenter(entityId):
