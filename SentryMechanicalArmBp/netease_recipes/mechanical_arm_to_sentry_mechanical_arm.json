@@ -1,0 +1,23 @@
+{
+    "format_version": "1.12",
+    "minecraft:recipe_shapeless": {
+        "description": {
+            "identifier": "create:sentry_mechanical_arm_to_mechanical_arm"
+        },
+        "ingredients": [
+            {
+                "count": 1,
+                "data": 0,
+                "item": "create:sentry_mechanical_arm"
+            }
+        ],
+        "result": {
+            "count": 1,
+            "data": 0,
+            "item": "create:mechanical_arm"
+        },
+        "tags": [
+            "crafting_table"
+        ]
+    }
+}
