@@ -24,6 +24,35 @@ _epApiChecked = False
 # 上一次看向的哨戒臂位置（避免重复显隐调用）
 _lastTargetPos = None
 
+# 玩家拾取距离平方上限（8^2=64），对齐主包 GogglesOverlaySystem._pickFacingBlock：
+# PickFacing 本身不限距，必须用玩家位置二次校验，否则会"隔着房间锁定"。
+_PLAYER_REACH_SQ = 64
+
+
+def _pickFacingSentry(playerId):
+    # type: (str) -> tuple | None
+    """
+    准星 → 哨戒动力臂方块的安全拾取：含距离限制 + 方块名校验。
+    返回 blockPos 或 None。模式与 arrisCreate.GogglesOverlaySystem._pickFacingBlock 对齐。
+    """
+    cameraComp = compFactory.CreateCamera(playerId)
+    if not cameraComp:
+        return None
+    pickData = cameraComp.PickFacing()
+    if not pickData or pickData.get("type") != "Block":
+        return None
+    blockPos = (pickData.get("x"), pickData.get("y"), pickData.get("z"))
+    pX, pY, pZ = compFactory.CreatePos(playerId).GetPos()
+    dx = blockPos[0] - pX
+    dy = blockPos[1] - pY
+    dz = blockPos[2] - pZ
+    if dx * dx + dy * dy + dz * dz > _PLAYER_REACH_SQ:
+        return None
+    blockInfo = compFactory.CreateBlockInfo(levelId).GetBlock(blockPos)
+    if not blockInfo or blockInfo[0] != SENTRY_ARM_BLOCK:
+        return None
+    return blockPos
+
 
 def _getEpApiInstance():
     # type: () -> object | None
@@ -61,30 +90,8 @@ def _onTickCheckCrosshair(args=None):
         return
 
     playerId = clientApi.GetLocalPlayerId()
-    cameraComp = compFactory.CreateCamera(playerId)
-    if not cameraComp:
-        if _lastTargetPos is not None:
-            proxy.hideButton()
-            _lastTargetPos = None
-        return
-
-    # PickFacing 获取准星方块
-    # 返回格式: {"type": "Block", "x": int, "y": int, "z": int, "face": int} 或 {"type": "None"}
-    result = cameraComp.PickFacing()
-    if not result or result.get("type") != "Block":
-        if _lastTargetPos is not None:
-            proxy.hideButton()
-            _lastTargetPos = None
-        return
-
-    blockPos = (result["x"], result["y"], result["z"])
-    # PickFacing 不返回 blockName，需要通过客户端 GetBlock 查询
-    # 客户端 API: GetBlock(pos) -> (blockName, auxValue)
-    blockInfoComp = compFactory.CreateBlockInfo(levelId)
-    blockResult = blockInfoComp.GetBlock(blockPos)
-    blockName = blockResult[0] if blockResult else ""
-
-    if blockName != SENTRY_ARM_BLOCK:
+    blockPos = _pickFacingSentry(playerId)
+    if not blockPos:
         if _lastTargetPos is not None:
             proxy.hideButton()
             _lastTargetPos = None
@@ -177,20 +184,10 @@ def _onSentryKeyPress(args):
     if args.get("isDown") != "1":
         return  # 仅按下触发，抬起忽略
 
-    # 准星检测（复用 _onTickCheckCrosshair 的逻辑）
+    # 准星检测（含玩家距离限制，对齐主包护目镜模式）
     playerId = clientApi.GetLocalPlayerId()
-    cameraComp = compFactory.CreateCamera(playerId)
-    if not cameraComp:
-        return
-    result = cameraComp.PickFacing()
-    if not result or result.get("type") != "Block":
-        return
-    blockPos = (result["x"], result["y"], result["z"])
-
-    blockInfoComp = compFactory.CreateBlockInfo(levelId)
-    blockResult = blockInfoComp.GetBlock(blockPos)
-    blockName = blockResult[0] if blockResult else ""
-    if blockName != SENTRY_ARM_BLOCK:
+    blockPos = _pickFacingSentry(playerId)
+    if not blockPos:
         return
 
     # 手持枪械 / 空手哨戒臂有武器 / 手持匹配子弹时才响应（服务端会再校验一次）
