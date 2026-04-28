@@ -132,19 +132,24 @@ def _onTickCheckCrosshair(args=None):
     # 目标或文本变化时更新（弹药数变化也刷新）
     stateKey = (blockPos, text)
     if _lastTargetPos != stateKey:
-        proxy.showButton(blockPos, 0, text)
+        proxy.showButton(blockPos, _getCurrentDim(), text)
         _lastTargetPos = stateKey
+
+
+def _getCurrentDim():
+    # type: () -> int
+    """获取玩家当前所在维度（主世界 0、下界 1、末路 2 等）"""
+    return compFactory.CreateGame(levelId).GetCurrentDimension()
 
 
 def _getSentryComp(blockPos):
     # type: (tuple) -> object | None
-    """读取哨戒臂 ECS Component"""
+    """读取哨戒臂 ECS Component（按当前维度查询，支持非主世界）"""
     ClientWorldMod = clientApi.ImportModule(_MAIN_PACK + ".Content.Client.ClientWorld")
     if not ClientWorldMod:
         return None
     world = ClientWorldMod.ClientWorld()
-    entityId = "{}_{}_{}_{}".format(blockPos[0], blockPos[1], blockPos[2], 0)
-    entity = world.getEntity(entityId)
+    entity = world.getEntityByPos(blockPos, _getCurrentDim())
     if not entity:
         return None
     return entity.getComponent("SentryArmComponent")
@@ -214,7 +219,7 @@ def _onSentryKeyPress(args):
             "posX": blockPos[0],
             "posY": blockPos[1],
             "posZ": blockPos[2],
-            "dimensionId": 0,
+            "dimensionId": _getCurrentDim(),
         },
     )
 
