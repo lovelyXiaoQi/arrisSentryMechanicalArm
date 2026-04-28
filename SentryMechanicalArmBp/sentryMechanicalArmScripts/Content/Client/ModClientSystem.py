@@ -17,6 +17,12 @@ from ...QuModLibs.Client import AllowCall, Call, Listen, clientApi
 # 导入交互模块（触发 @Listen("OnScriptTickClient") 准星检测注册）
 from . import SentryArmInteraction as _sentryInteraction  # noqa: F401
 
+# 导入自定义索敌登记板 UI 与客户端事件钩子
+# - SentryTargetManageUi: @ScreenNodeWrapper.autoRegister 在 UI 初始化阶段注册全屏 UI
+# - TargetBoardClient: @Listen("ClientItemTryUseEvent") 注册右键空气触发
+from . import SentryTargetManageUi as _sentryTargetManageUi  # noqa: F401
+from . import TargetBoardClient as _targetBoardClient  # noqa: F401
+
 SENTRY_ARM_BLOCK = "create:sentry_mechanical_arm"
 SENTRY_ARM_ENTITY = "create:sentry_mechanical_arm_model"
 

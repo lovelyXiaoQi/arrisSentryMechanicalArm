@@ -1,0 +1,7 @@
+{
+    "texture_data": {
+        "create:target_board": {
+            "textures": "textures/items/target_board"
+        }
+    }
+}

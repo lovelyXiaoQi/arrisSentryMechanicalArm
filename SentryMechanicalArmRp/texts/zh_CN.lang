@@ -1,1 +1,2 @@
 tile.create:sentry_mechanical_arm.name=哨戒动力臂
+item.create:target_board.name=哨戒动力臂自定义索敌设置

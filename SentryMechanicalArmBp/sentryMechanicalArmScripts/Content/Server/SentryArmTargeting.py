@@ -691,6 +691,30 @@ def _findNearestHostile(entity, scanRange):
     if not entityIds:
         return None
 
+    # 索敌模式判定（一次读取 SentryArmComponent 给后续循环复用）
+    sentryComp = entity.getComponent("SentryArmComponent")
+    mode = int(getattr(sentryComp, "targetMode", 0) or 0) if sentryComp else 0
+    # 自定义模式的两套匹配集（玩家走 name 集，非玩家走 typeStr 集）
+    customTypeSet = None
+    customPlayerNameSet = None
+    if mode == 1:
+        customRaw = getattr(sentryComp, "customTargets", "") or ""
+        customTypeSet = set()
+        customPlayerNameSet = set()
+        # 编码规则: 非玩家 = "<typeStr>"，玩家 = "minecraft:player@<name>"
+        for token in customRaw.split(","):
+            if not token:
+                continue
+            if token.startswith("minecraft:player@"):
+                pname = token[len("minecraft:player@"):]
+                if pname:
+                    customPlayerNameSet.add(pname)
+            else:
+                customTypeSet.add(token)
+        if not customTypeSet and not customPlayerNameSet:
+            # 自定义模式但列表空 → 不索敌（行为同 IDLE）
+            return None
+
     armCenter = (pos[0] + 0.5, pos[1] + 0.5, pos[2] + 0.5)
     candidates = []  # [(distSq, eid)]
 
@@ -698,12 +722,31 @@ def _findNearestHostile(entity, scanRange):
         attrComp = compFactory.CreateAttr(eid)
         if not attrComp:
             continue
-        # 敌对判定：实体 type_family 与 _HOSTILE_FAMILIES 有交集即敌对。
-        # type_family 由实体行为包 JSON 显式声明，对自定义 / 模组实体也可靠
-        # （比 GetEngineType 位掩码更稳，自定义实体常被引擎默认归类为 Mob）。
-        families = attrComp.GetTypeFamily()
-        if not families or not (set(families) & _HOSTILE_FAMILIES):
-            continue
+        # 敌对判定按模式分流
+        if mode == 1:
+            # CUSTOM: 玩家按 GetName 精确匹配,非玩家按 typeStr 精确匹配
+            typeStr = compFactory.CreateEngineType(eid).GetEngineTypeStr()
+            if not typeStr:
+                continue
+            if typeStr == "minecraft:player":
+                if not customPlayerNameSet:
+                    continue
+                try:
+                    pname = compFactory.CreateName(eid).GetName() or ""
+                except Exception:
+                    pname = ""
+                if pname not in customPlayerNameSet:
+                    continue
+            else:
+                if typeStr not in customTypeSet:
+                    continue
+        else:
+            # DEFAULT: 实体 type_family 与 _HOSTILE_FAMILIES 有交集即敌对。
+            # type_family 由实体行为包 JSON 显式声明，对自定义 / 模组实体也可靠
+            # （比 GetEngineType 位掩码更稳，自定义实体常被引擎默认归类为 Mob）。
+            families = attrComp.GetTypeFamily()
+            if not families or not (set(families) & _HOSTILE_FAMILIES):
+                continue
         # 健康 > 0
         health = attrComp.GetAttrValue(_AttrType.HEALTH)
         if health is None or health <= 0:

@@ -23,6 +23,7 @@ from ...QuModLibs.Server import Listen, regModLoadFinishHandler, serverApi
 from . import (
     SentryArmInteraction as _sentryInteraction,  # noqa: F401
     SentryArmTargeting as _sentryTargeting,
+    TargetBoardServer as _targetBoardServer,  # noqa: F401  自定义索敌登记板事件 + RPC
 )
 
 
@@ -117,6 +118,14 @@ def _doRegister():
             currentMagazine = arris.Field(default=0, persistent=True, synced=True)
             ammoReserve = arris.Field(default=0, persistent=True, synced=True)
             bulletType = arris.Field(default="", persistent=True, synced=True)
+
+            # ---- 自定义索敌 ----
+            # 0 = DEFAULT (按 _HOSTILE_FAMILIES 索敌)
+            # 1 = CUSTOM  (按 customTargets 中的 typeStr 列表精确索敌)
+            targetMode = arris.Field(default=0, persistent=True, synced=True)
+            # 逗号分隔的 typeStr 列表，例如 "minecraft:zombie,minecraft:skeleton"
+            # ECS Field 不支持 list，用字符串编码后再 split
+            customTargets = arris.Field(default="", persistent=True, synced=True)
 
         componentClass = SentryArmComponent
 

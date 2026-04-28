@@ -1,6 +1,7 @@
 {
     "ui_defs": [
         "ui/createEquipGunUi.json",
+        "ui/sentry_target_manage.json",
         "ui/hud_screen.json"
     ]
 }
