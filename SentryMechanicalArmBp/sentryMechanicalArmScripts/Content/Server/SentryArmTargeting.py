@@ -30,32 +30,45 @@ WAITING_AMMO = 5  # 弹匣空 + 库存空，等动力臂补弹
 # 扫描间隔（tick）
 SCAN_INTERVAL = 10
 
-# 敌对实体分类（EntityType 位掩码）
-# NetEase EntityType 是层次化位掩码：低 8 位 = 实体唯一 ID，高位 = 分类（Mob/Monster/...）。
-# 用 (engType & mask) == mask 判断实体是否属于该分类（含其所有子类）。
-_ETEnum = serverApi.GetMinecraftEnum().EntityType
 _AttrType = serverApi.GetMinecraftEnum().AttrType
 
 
-def _collectHostileMasks():
-    """
-    分类掩码：Monster 已含 PathfinderMob | Mob 三层位，覆盖几乎所有原版 + 模组怪物
-    （ZombieMonster / UndeadMob / SkeletonMonster / Arthropod 都从 Monster 派生）。
-    Arthropod 显式列出冗余但便于阅读。
-
-    注：故意不收 Piglin / PiglinBrute / Hoglin 这类中立怪 —— 它们不主动攻击玩家，
-    哨戒臂也不应主动锁定。
-    """
-    names = ("Monster", "Arthropod", "UndeadMob", "ZombieMonster", "SkeletonMonster")
-    masks = []
-    for name in names:
-        mask = getattr(_ETEnum, name, None)
-        if mask is not None:
-            masks.append(mask)
-    return tuple(masks)
-
-
-_HOSTILE_MASKS = _collectHostileMasks()
+# 敌对生物 type_family 过滤集（行为包字段 minecraft:type_family）。
+# 用 set & set 相交判定，比 GetEngineType 位掩码更友好——
+# GetEngineType 对自定义/模组实体有限制（默认归类 Mob），但 type_family 由实体 JSON 显式声明。
+# 与某实体 family 列表有交集即视为敌对。
+#
+# 故意不收 piglin / piglin_brute / hoglin 等中立怪——它们不主动攻击玩家，
+# 哨戒臂也不应主动锁定。
+_HOSTILE_FAMILIES = frozenset([
+    "monster",          # 通用敌对（绝大多数原版 + 模组敌对生物）
+    "undead",           # 亡灵系（僵尸/骷髅/凋灵/幻翼/僵尸猪灵 等）
+    "zombie",           # 僵尸 / 僵尸村民 / 尸壳 / 溺尸 / 僵尸疣猪兽
+    "skeleton",         # 骷髅 / 流浪者 / 凋灵骷髅 / 沼骸
+    "arthropod",        # 蜘蛛 / 蠹虫 / 末影螨
+    "creeper",
+    "spider",
+    "enderman",
+    "ghast",
+    "blaze",
+    "slime",
+    "magma_cube",
+    "guardian",
+    "elder_guardian",
+    "shulker",
+    "vex",
+    "pillager",
+    "illager",
+    "vindicator",
+    "evocation_illager",
+    "witch",
+    "ravager",
+    "warden",
+    "breeze",
+    "wither",
+    "wither_boss",
+    "dragon",
+])
 
 _RayFilterType = serverApi.GetMinecraftEnum().RayFilterType
 
@@ -682,19 +695,22 @@ def _findNearestHostile(entity, scanRange):
     candidates = []  # [(distSq, eid)]
 
     for eid in entityIds:
-        typeComp = compFactory.CreateEngineType(eid)
-        if not typeComp:
+        attrComp = compFactory.CreateAttr(eid)
+        if not attrComp:
             continue
-        engType = typeComp.GetEngineType()
-        if engType is None:
+        # 敌对判定：实体 type_family 与 _HOSTILE_FAMILIES 有交集即敌对。
+        # type_family 由实体行为包 JSON 显式声明，对自定义 / 模组实体也可靠
+        # （比 GetEngineType 位掩码更稳，自定义实体常被引擎默认归类为 Mob）。
+        families = attrComp.GetTypeFamily()
+        if not families or not (set(families) & _HOSTILE_FAMILIES):
             continue
-        # 敌对判定：分类掩码 (Monster/Arthropod) 命中即视为敌对
-        if not any((engType & m) == m for m in _HOSTILE_MASKS):
-            continue
-        if not _isEntityAlive(eid):
+        # 健康 > 0
+        health = attrComp.GetAttrValue(_AttrType.HEALTH)
+        if health is None or health <= 0:
             continue
         # SPEED == 0 通常是 mod 的"尸体"残留（免伤打不死），跳过
-        if not _isMovable(eid):
+        speed = attrComp.GetAttrValue(_AttrType.SPEED)
+        if speed is None or speed <= 0:
             continue
         ePos = compFactory.CreatePos(eid).GetFootPos()
         if not ePos:
@@ -725,20 +741,6 @@ def _isEntityAlive(entityId):
         return False
     health = attrComp.GetAttrValue(_AttrType.HEALTH)
     return health is not None and health > 0
-
-
-def _isMovable(entityId):
-    # type: (str) -> bool
-    """
-    SPEED 属性 > 0 才视为可被攻击的活体目标。
-    某些模组在生物倒地后会留下"尸体"实体，免疫一切伤害但仍在世界里 ——
-    它们的 SPEED 通常被改成 0。哨戒臂不应在它们身上浪费弹药。
-    """
-    attrComp = compFactory.CreateAttr(entityId)
-    if not attrComp:
-        return False
-    speed = attrComp.GetAttrValue(_AttrType.SPEED)
-    return speed is not None and speed > 0
 
 
 def _getEntityCenter(entityId):
