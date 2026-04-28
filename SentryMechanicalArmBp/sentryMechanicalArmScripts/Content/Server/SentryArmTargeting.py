@@ -40,35 +40,37 @@ _AttrType = serverApi.GetMinecraftEnum().AttrType
 #
 # 故意不收 piglin / piglin_brute / hoglin 等中立怪——它们不主动攻击玩家，
 # 哨戒臂也不应主动锁定。
-_HOSTILE_FAMILIES = frozenset([
-    "monster",          # 通用敌对（绝大多数原版 + 模组敌对生物）
-    "undead",           # 亡灵系（僵尸/骷髅/凋灵/幻翼/僵尸猪灵 等）
-    "zombie",           # 僵尸 / 僵尸村民 / 尸壳 / 溺尸 / 僵尸疣猪兽
-    "skeleton",         # 骷髅 / 流浪者 / 凋灵骷髅 / 沼骸
-    "arthropod",        # 蜘蛛 / 蠹虫 / 末影螨
-    "creeper",
-    "spider",
-    "enderman",
-    "ghast",
-    "blaze",
-    "slime",
-    "magma_cube",
-    "guardian",
-    "elder_guardian",
-    "shulker",
-    "vex",
-    "pillager",
-    "illager",
-    "vindicator",
-    "evocation_illager",
-    "witch",
-    "ravager",
-    "warden",
-    "breeze",
-    "wither",
-    "wither_boss",
-    "dragon",
-])
+_HOSTILE_FAMILIES = frozenset(
+    [
+        "monster",  # 通用敌对（绝大多数原版 + 模组敌对生物）
+        "undead",  # 亡灵系（僵尸/骷髅/凋灵/幻翼/僵尸猪灵 等）
+        "zombie",  # 僵尸 / 僵尸村民 / 尸壳 / 溺尸 / 僵尸疣猪兽
+        "skeleton",  # 骷髅 / 流浪者 / 凋灵骷髅 / 沼骸
+        "arthropod",  # 蜘蛛 / 蠹虫 / 末影螨
+        "creeper",
+        "spider",
+        "enderman",
+        "ghast",
+        "blaze",
+        "slime",
+        "magma_cube",
+        "guardian",
+        "elder_guardian",
+        "shulker",
+        "vex",
+        "pillager",
+        "illager",
+        "vindicator",
+        "evocation_illager",
+        "witch",
+        "ravager",
+        "warden",
+        "breeze",
+        "wither",
+        "wither_boss",
+        "dragon",
+    ]
+)
 
 _RayFilterType = serverApi.GetMinecraftEnum().RayFilterType
 
@@ -706,7 +708,7 @@ def _findNearestHostile(entity, scanRange):
             if not token:
                 continue
             if token.startswith("minecraft:player@"):
-                pname = token[len("minecraft:player@"):]
+                pname = token[len("minecraft:player@") :]
                 if pname:
                     customPlayerNameSet.add(pname)
             else:
@@ -754,6 +756,10 @@ def _findNearestHostile(entity, scanRange):
         # SPEED == 0 通常是 mod 的"尸体"残留（免伤打不死），跳过
         speed = attrComp.GetAttrValue(_AttrType.SPEED)
         if speed is None or speed <= 0:
+            continue
+        # mark_variant == 999 是部分 mod 用于标记"尸体"实体的约定值，免伤无法击杀，跳过
+        markVariant = compFactory.CreateEntityDefinitions(eid).GetMarkVariant() or 0
+        if markVariant == 999:
             continue
         ePos = compFactory.CreatePos(eid).GetFootPos()
         if not ePos:
