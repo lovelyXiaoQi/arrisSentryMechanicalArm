@@ -1,0 +1,23 @@
+{
+    "format_version": "1.12",
+    "minecraft:recipe_shapeless": {
+        "description": {
+            "identifier": "create:target_board"
+        },
+        "ingredients": [
+            {
+                "count": 4,
+                "data": 0,
+                "item": "minecraft:paper"
+            }
+        ],
+        "result": {
+            "count": 1,
+            "data": 0,
+            "item": "create:target_board"
+        },
+        "tags": [
+            "crafting_table"
+        ]
+    }
+}

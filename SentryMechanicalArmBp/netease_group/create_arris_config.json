@@ -1,0 +1,12 @@
+{
+    "groups": [
+        {
+            "group_name": "itemGroup.create.sentry_mechanical_arm",
+            "icon": "create:sentry_mechanical_arm",
+            "list": [
+                "create:target_board",
+                "create:sentry_mechanical_arm"
+            ]
+        }
+    ]
+}

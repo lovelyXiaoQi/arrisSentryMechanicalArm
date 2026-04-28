@@ -2,7 +2,10 @@
     "format_version": "1.10",
     "minecraft:item": {
         "components": {
-            "minecraft:max_stack_size": 1
+            "minecraft:max_stack_size": 1,
+            "netease:customtips": {
+                "value": "§e使用说明:\n  §7右键/长按打开索敌管理UI界面\n  手持物品点击对应实体即可加入索敌列表\n  使用空的索敌设置物品点击哨戒动力臂即可重置设置"
+            }
         },
         "description": {
             "category": "create",

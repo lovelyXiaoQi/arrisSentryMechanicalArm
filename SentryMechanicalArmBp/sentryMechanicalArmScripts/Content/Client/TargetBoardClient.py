@@ -2,41 +2,52 @@
 """
 TargetBoardClient - "哨戒动力臂自定义索敌设置" 客户端事件钩子
 
-监听 ClientItemTryUseEvent: 玩家手持 target_board 右键时,
-通过 PickFacing 判定是否未命中方块/实体 (即"对空气右键"),
-是 → push 管理 UI;否 → 不拦截,让事件继续走 ServerItemUseOnEvent (服务端有 handler)。
+打开 UI 的策略对齐主包列表过滤器 (FilterInteraction):
+  - ClientItemTryUseEvent (右键空气/方块都触发) → 默认打开 UI
+  - ClientItemUseOnEvent  (右键方块时先于 TryUse 触发) → 若目标是哨戒动力臂方块,
+    设置抑制时间戳让随后 TryUse 跳过 UI (服务端 ServerItemUseOnEvent 仍照常应用配置)
+  - 不再用 PickFacing 距离/类型判断 —— 对远处方块/边角情况会误判
 """
 
-from ...QuModLibs.Client import Listen, clientApi
+import time as _timeModule
+
+from ...QuModLibs.Client import Listen, clientApi  # noqa: F401
 from .SentryTargetManageUi import SentryTargetManageUi
 
 TARGET_BOARD = "create:target_board"
+SENTRY_ARM_BLOCK = "create:sentry_mechanical_arm"
 
-compFactory = clientApi.GetEngineCompFactory()
+# 抑制 UI 时间戳:右键哨戒臂方块时由 ClientItemUseOnEvent 设置,
+# 紧接的 ClientItemTryUseEvent 里看到 0.5s 内的标志 → 跳过 UI。
+_suppressUITs = [0.0]
+
+
+@Listen("ClientItemUseOnEvent")
+def _onItemUseOnBlock(args):
+    # type: (dict) -> None
+    """
+    手持 board 右键方块时优先触发 (早于 ClientItemTryUseEvent)。
+    若目标是哨戒动力臂方块 → 设置抑制时间戳,防止后续 TryUse 误开 UI。
+    """
+    itemDict = args.get("itemDict") or {}
+    if itemDict.get("newItemName") != TARGET_BOARD:
+        return
+    if args.get("blockName") != SENTRY_ARM_BLOCK:
+        return
+    _suppressUITs[0] = _timeModule.time()
 
 
 @Listen("ClientItemTryUseEvent")
 def _onItemTryUse(args):
     # type: (dict) -> None
     """
-    客户端"右键尝试使用物品"事件 (引擎判定使用类型之前抛出)。
-    手持 target_board + 准星未命中方块/实体 → 视为对空气右键 → 推 UI。
-
-    备注:ClientItemTryUseEvent 不能取消"对方块/实体使用物品"
-    (引擎对方块走另外的路径),所以右键方块仍会触发 ServerItemUseOnEvent。
+    手持 board 右键 → 打开管理 UI。
+    若 0.5 秒内有 ClientItemUseOnEvent 抑制(右键的是哨戒臂方块),则跳过。
     """
     itemDict = args.get("itemDict") or {}
     if itemDict.get("newItemName") != TARGET_BOARD:
         return
-
-    playerId = clientApi.GetLocalPlayerId()
-    cameraComp = compFactory.CreateCamera(playerId)
-    if not cameraComp:
+    elapsed = _timeModule.time() - _suppressUITs[0]
+    if elapsed < 0.5:
         return
-    pickData = cameraComp.PickFacing()
-    # 命中方块或实体 → 走主流程,不弹 UI
-    if pickData and pickData.get("type") in ("Block", "Entity"):
-        return
-
     SentryTargetManageUi.pushScreen()
-    args["cancel"] = True  # 阻止后续物品使用网络包(纯打开 UI,无副作用)
