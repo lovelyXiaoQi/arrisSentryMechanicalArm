@@ -2,21 +2,21 @@
   "modules": [
     {
       "type": "resources",
-      "uuid": "59da625f-0375-40a8-81a3-64e905aa9b19",
+      "uuid": "f34185e2-1049-4fe3-a1c6-36b845fe33fd",
       "version": [
         1,
         0,
-        1
+        2
       ],
       "description": "棱花Arris-哨戒动力臂"
     }
   ],
   "header": {
-    "uuid": "61f3b853-2b91-42a2-828f-56e939b35e26",
+    "uuid": "1982c1e4-d11d-4fb8-8b23-1adc029836af",
     "version": [
       1,
       0,
-      1
+      2
     ],
     "description": "棱花Arris-哨戒动力臂",
     "name": "棱花Arris-哨戒动力臂",

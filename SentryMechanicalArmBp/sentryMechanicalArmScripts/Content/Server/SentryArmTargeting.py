@@ -72,6 +72,12 @@ _HOSTILE_FAMILIES = frozenset(
     ]
 )
 
+# 敌对豁免名单(优先级高于 _HOSTILE_FAMILIES):
+# 即便实体匹配上敌对 family,只要带这些标签也跳过——
+#   - "epitem"     : EP 军工里的弹药/特效/掉落物之类的非生物体
+#   - "inanimate"  : 模组约定的"无生命/装饰物/雕像"标签,通常不应被攻击
+_NON_HOSTILE_FAMILIES = frozenset(["epitem", "inanimate"])
+
 _RayFilterType = serverApi.GetMinecraftEnum().RayFilterType
 
 # 射线穿透白名单：植物 / 树苗 / 珊瑚 / 液体 / 藤蔓 / 泡泡柱 / 细雪等非实体阻挡方块。
@@ -341,6 +347,16 @@ def _tickShooting(entity, comp):
     # 执行射击
     api = _getEpApiServer()
     if not api:
+        return
+
+    # 射击前重验:目标被某 mod 转成"尸体"(SPEED=0 / markVariant=999 /
+    # 加上 epitem/inanimate family) → 停止鞭尸,放弃目标重回 SCANNING
+    targetId = _trackedTargets.get(entity.id)
+    if targetId and not _isStillAttackable(targetId):
+        comp.state = SCANNING
+        comp.hasTarget = False
+        _trackedTargets.pop(entity.id, None)
+        _fireCooldowns.pop(entity.id, None)
         return
 
     # 射线检查：目标被实体方块遮挡 → 放弃当前目标重回 SCANNING
@@ -747,7 +763,13 @@ def _findNearestHostile(entity, scanRange):
             # type_family 由实体行为包 JSON 显式声明，对自定义 / 模组实体也可靠
             # （比 GetEngineType 位掩码更稳，自定义实体常被引擎默认归类为 Mob）。
             families = attrComp.GetTypeFamily()
-            if not families or not (set(families) & _HOSTILE_FAMILIES):
+            if not families:
+                continue
+            familySet = set(families)
+            # 豁免名单 (epitem / inanimate 等) 优先级高于敌对 family
+            if familySet & _NON_HOSTILE_FAMILIES:
+                continue
+            if not (familySet & _HOSTILE_FAMILIES):
                 continue
         # 健康 > 0
         health = attrComp.GetAttrValue(_AttrType.HEALTH)
@@ -790,6 +812,39 @@ def _isEntityAlive(entityId):
         return False
     health = attrComp.GetAttrValue(_AttrType.HEALTH)
     return health is not None and health > 0
+
+
+def _isStillAttackable(entityId):
+    # type: (str) -> bool
+    """
+    锁定后 / 射击前的"仍可攻击"复检。
+    返回 False → 应停止攻击,放弃目标重回 SCANNING。
+
+    检查项 (与扫描时的 _findNearestHostile 过滤对齐):
+    - SPEED > 0      —— 部分模组把"尸体"实体的 SPEED 设为 0
+    - markVariant != 999 —— 部分模组用 999 标记免伤"尸体"
+    - type_family 不含 _NON_HOSTILE_FAMILIES (epitem / inanimate 等)
+    HEALTH 由 _isEntityAlive 单独检 (这里不重复)。
+    """
+    attrComp = compFactory.CreateAttr(entityId)
+    if not attrComp:
+        return False
+    # SPEED
+    speed = attrComp.GetAttrValue(_AttrType.SPEED)
+    if speed is None or speed <= 0:
+        return False
+    # markVariant
+    try:
+        markVariant = compFactory.CreateEntityDefinitions(entityId).GetMarkVariant()
+    except Exception:
+        markVariant = -1
+    if markVariant == 999:
+        return False
+    # type_family 豁免标签
+    families = attrComp.GetTypeFamily()
+    if families and (set(families) & _NON_HOSTILE_FAMILIES):
+        return False
+    return True
 
 
 def _getEntityCenter(entityId):
