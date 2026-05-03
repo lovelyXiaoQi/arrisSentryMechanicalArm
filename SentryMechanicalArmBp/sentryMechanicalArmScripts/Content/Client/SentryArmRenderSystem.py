@@ -157,6 +157,11 @@ def _doRegister():
         # ---- 私有：生命周期 ----
 
         def _createClientEntity(self, entity):
+            """幂等：先销毁可能残留的旧 visual，再创建新的 —— 防止
+            ModBlockEntityLoadedClientEvent 多次触发（chunk reload / 玩家离开后重入加载范围）
+            导致 onEntityAdded 反复调用而堆积多个客户端实体。"""
+            self._destroyClientEntity(entity.id)
+
             pos = entity.blockPos
             if not pos:
                 return
