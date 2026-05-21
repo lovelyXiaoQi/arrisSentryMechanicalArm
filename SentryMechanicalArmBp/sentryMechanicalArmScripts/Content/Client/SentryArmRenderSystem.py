@@ -21,7 +21,7 @@ SentryArmRenderSystem - 哨戒动力臂客户端渲染系统
 import math
 import time
 
-from ...QuModLibs.Client import clientApi, levelId, regModLoadFinishHandler
+from ...QuModLibs.Client import clientApi, levelId
 from ...QuModLibs.Systems.Loader.Client import LoaderSystem
 
 SENTRY_ARM_BLOCK = "create:sentry_mechanical_arm"
@@ -44,25 +44,31 @@ def _getClientLoader():
     return LoaderSystem.getSystem()
 
 
-# ==================== 双保险注册 ====================
-# 主包加载顺序不确定: 模块 import 时尝试一次,失败则注册到
-# regModLoadFinishHandler 在所有 mod 加载完毕后再试。
+# ==================== 事件驱动注册 ====================
+# 监听 ClientExtensionApiReady 事件,收到 facade 后通过 @ext.registerSystem 装饰类。
+# 主包 _publishAndFreezeClientExtensionApi 在广播 ready 事件之后会再调一次
+# `_clientWorld.initRegisteredSystems()`,我们 handler 内 append 的 _pendingSystems
+# 条目会被那一次 init 拾起实例化。无需手动 addSystem。
 
 _registered = False
 
 
-def _doRegister():
-    # type: () -> bool
-    """向主包 ClientWorld 注册 SentryArmRenderSystem。成功返回 True。"""
+def _doRegister(ext):
+    # type: (object) -> bool
+    """向主包 ClientWorld 注册 SentryArmRenderSystem。成功返回 True。
+
+    Args:
+        ext: ExtensionApiFacade 实例 (含 System / registerSystem 属性)
+    """
     global _registered
     if _registered:
         return True
-    sysMod = clientApi.ImportModule(_MAIN_PACK + ".Content.Shared.System")
-    worldMod = clientApi.ImportModule(_MAIN_PACK + ".Content.Shared.World")
-    if not sysMod or not worldMod:
+    if ext is None:
         return False
-    System = sysMod.System
-    registerSystem = worldMod.registerSystem
+    System = ext.System
+    registerSystem = ext.registerSystem
+    if System is None or registerSystem is None:
+        return False
 
     @registerSystem("ClientWorld", priority=2)
     class SentryArmRenderSystem(System):
@@ -300,11 +306,40 @@ def _doRegister():
     return True
 
 
-# 尝试 1: 模块加载时(主包可能已就绪)
-_doRegister()
+# ==================== 事件订阅入口 ====================
 
 
-# 尝试 2: 全部 mod 加载完毕后兜底
-@regModLoadFinishHandler
-def _onAllModsLoaded():
-    _doRegister()
+def _onArrisCreateReady(args):
+    ext = args.get("extension") if isinstance(args, dict) else None
+    if ext is None:
+        return
+    _doRegister(ext)
+
+
+def _setupRegistration():
+    arrisMod = clientApi.ImportModule(_MAIN_PACK + ".Api.ExtensionApi")
+    if arrisMod is None:
+        return  # 主包未安装,优雅降级
+
+    if not hasattr(arrisMod, "getClientExtensionApi"):
+        return  # 旧版主包没有 facade,这条渲染系统注册路径只支持新版
+
+    ext = arrisMod.getClientExtensionApi()
+    eventName = getattr(arrisMod, "CLIENT_EXTENSION_API_READY_EVENT", None)
+    if eventName:
+        namespace = arrisMod.EXTENSION_API_NAMESPACE
+        systemName = arrisMod.EXTENSION_API_SYSTEM_NAME
+        loader = LoaderSystem.getSystem()
+        if loader is not None:
+            # NetEase ListenForEvent 通过 getattr(parent, func.__name__) 查回调,
+            # 模块级函数必须先挂到 parent(loader) 上。QuMod 的 _allocMethodWithOUTFunction
+            # 用随机名做 setattr 并返回包装方法,避免重名冲突。
+            wrappedFunc = loader._allocMethodWithOUTFunction(_onArrisCreateReady)
+            loader.ListenForEvent(namespace, systemName, eventName, loader, wrappedFunc)
+
+    # 兜底:订阅来得晚,主包已 freeze → 立即跑一次
+    if ext.isFrozen():
+        _doRegister(ext)
+
+
+_setupRegistration()

@@ -11,13 +11,14 @@ ModServerSystem - 哨戒机械臂服务端入口
     3. 注册动力臂交互点 (RuntimePointRegistry，主 mod 内部 API 但路径稳定)
     4. 注册顶/底面放置规则 (PlacementRulesMeta，主 mod 内部 API)
 
-主 mod 未安装时优雅降级：所有注册 skip，tick 阶段也跳过，方块仍可放置
-但无 ECS 行为（和独立 mod 作者初衷一致）。
+入口方式: 监听主 mod 的 ServerExtensionApiReady 事件,handler 内通过 args["extension"]
+拿到 ExtensionApiFacade 完成所有注册。事件订阅 + isFrozen() 兜底保证不会错过。
+
+主 mod 未安装时优雅降级:订阅失败 / facade 不存在 → 全部 skip,tick 阶段也跳过,
+方块仍可放置但无 ECS 行为(和独立 mod 作者初衷一致)。
 """
 
-import traceback
-
-from ...QuModLibs.Server import Listen, regModLoadFinishHandler, serverApi
+from ...QuModLibs.Server import Listen, serverApi
 
 # 导入子模块（触发 @AllowCall / @Listen 装饰器注册）
 from . import (
@@ -46,18 +47,6 @@ _registered = False
 compFactory = serverApi.GetEngineCompFactory()
 
 
-# ==================== 主 mod 公共 API 引入 ====================
-#
-# 重点教学：扩展 mod 的对外入口是 Api.ExtensionApi（Phase A/B）。
-# 通过 ImportModule 拿到的 arris 对象暴露：
-#   - registerBlock / extendGearboxBlocks / ...     (方块注册 / 特性集合)
-#   - registerComponent                              (自定义 Component 注册)
-#   - Component / Field / Behaviour / System / World / registerSystem  (基类 re-export)
-#   - onServerConfigFrozen / onClientConfigFrozen    (生命周期订阅)
-
-arris = serverApi.ImportModule(_MAIN_PACK + ".Api.ExtensionApi")
-
-
 def _importMainModule(path):
     # type: (str) -> object | None
     """Lazy import 主 mod 的其他稳定路径（Component / 内部 API）。"""
@@ -67,17 +56,20 @@ def _importMainModule(path):
 # ==================== 核心注册流程 ====================
 
 
-def _doRegister():
-    # type: () -> bool
-    """向主 mod 注册 ECS 配置 / 动力臂交互点 / 放置规则。
+def _doRegister(ext):
+    # type: (object) -> bool
+    """
+    向主 mod 注册 ECS 配置 / 动力臂交互点 / 放置规则。
 
-    幂等：重复调用是 no-op。
-    返回 True 表示成功；False 表示主 mod 还未就绪（由 onServerConfigFrozen 重试）。
+    Args:
+        ext: ExtensionApiFacade 实例 (或旧版 arris 模块,接口同形)
+
+    幂等:重复调用是 no-op。
     """
     global _registered
     if _registered:
         return True
-    if arris is None:
+    if ext is None:
         return False
 
     # -------- Step 1+2+3: ECS Component 定义 + 方块 ECS 配置注册 --------
@@ -87,7 +79,7 @@ def _doRegister():
     # 提前 return,渲染系统永远不会被通知)。
     from ..Shared.SentryArmRegistration import registerSentryArmEcs
 
-    componentClass = registerSentryArmEcs(arris, _importMainModule)
+    componentClass = registerSentryArmEcs(ext, _importMainModule)
     if componentClass is None:
         return False
 
@@ -118,40 +110,51 @@ def _doRegister():
     return True
 
 
-# ==================== 双保险注册 ====================
+# ==================== 事件驱动入口 ====================
 #
-# 时序挑战：本 mod 的 ModServerSystem 和主 mod 的 ModServerSystem 哪个先被 import
-# 取决于网易 SDK 的 mod 加载顺序（无保证）。两种情况都要兼容：
+# arrisCreate Api 推荐流程(详见主 mod docs/EXTENSION-API.md §2):
+#   1. 订阅 ServerExtensionApiReady 事件
+#   2. handler 收到 args["extension"] (ExtensionApiFacade) 后调注册
+#   3. isFrozen() 兜底:订阅时主 mod 已经 freeze 完了 → 立即调一次
 #
-#   case A：本 mod 先于主 mod → 模块加载时 arris=None，需要兜底
-#   case B：主 mod 先于本 mod → 模块加载时 arris 已可用，立即注册即可
-#
-# 策略：尝试立即注册；无论成功失败，再挂 onServerConfigFrozen / regModLoadFinishHandler
-# 兜底一次。_doRegister 幂等，重复调用无害。
-
-# 尝试 1：模块加载时立即注册（case B）
-try:
-    _doRegister()
-except Exception:
-    traceback.print_exc()
+# 旧版 arrisCreate(没有 getServerExtensionApi)→ 优雅降级 no-op,
+# 方块仍可放置但无 ECS 行为(和独立 mod 作者初衷一致)。
 
 
-# 尝试 2：所有 mod 加载完毕后兜底（case A 的解药）
-if arris is not None:
-    # 推荐写法：订阅主 mod 的 onServerConfigFrozen（语义明确 + 与主 mod 生命周期对齐）
-    arris.onServerConfigFrozen(_doRegister)
-else:
-    # 主 mod 在本模块加载时仍然不可达 —— 用 SDK 级 regModLoadFinishHandler 做最终兜底，
-    # 等所有 mod 加载完后再次尝试 ImportModule
-    @regModLoadFinishHandler
-    def _onAllModsLoaded():
-        global arris
-        if arris is None:
-            try:
-                arris = serverApi.ImportModule(_MAIN_PACK + ".Api.ExtensionApi")
-            except Exception:
-                return  # 主 mod 未安装，优雅降级
-        try:
-            _doRegister()
-        except Exception:
-            traceback.print_exc()
+def _onArrisCreateReady(args):
+    ext = args.get("extension") if isinstance(args, dict) else None
+    if ext is None:
+        return
+    _doRegister(ext)
+
+
+def _setupRegistration():
+    arrisMod = serverApi.ImportModule(_MAIN_PACK + ".Api.ExtensionApi")
+    if arrisMod is None:
+        return  # 主 mod 未安装,优雅降级
+
+    # 新版 API 路径:facade + 事件订阅
+    if hasattr(arrisMod, "getServerExtensionApi"):
+        ext = arrisMod.getServerExtensionApi()
+
+        # 订阅 ServerExtensionApiReady,主 mod 之后 broadcast 时会调 _onArrisCreateReady
+        eventName = getattr(arrisMod, "SERVER_EXTENSION_API_READY_EVENT", None)
+        if eventName:
+            namespace = arrisMod.EXTENSION_API_NAMESPACE
+            systemName = arrisMod.EXTENSION_API_SYSTEM_NAME
+            from ...QuModLibs.Systems.Loader.Server import LoaderSystem
+
+            loader = LoaderSystem.getSystem()
+            if loader is not None:
+                # NetEase ListenForEvent 通过 getattr(parent, func.__name__) 查回调,
+                # 模块级函数必须先挂到 parent(loader) 上。QuMod 的 _allocMethodWithOUTFunction
+                # 用随机名做 setattr 并返回包装方法,避免重名冲突。
+                wrappedFunc = loader._allocMethodWithOUTFunction(_onArrisCreateReady)
+                loader.ListenForEvent(namespace, systemName, eventName, loader, wrappedFunc)
+
+        # 兜底:若主 mod 已经 freeze(订阅来得晚),立刻拿 facade 跑一次
+        if ext.isFrozen():
+            _doRegister(ext)
+
+
+_setupRegistration()

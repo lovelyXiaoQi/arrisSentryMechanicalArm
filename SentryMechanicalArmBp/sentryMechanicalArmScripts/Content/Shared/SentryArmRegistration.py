@@ -25,7 +25,10 @@ def registerSentryArmEcs(arris, importMainModule):
     定义并注册 SentryArmComponent,把哨戒臂方块加入 CreateBlockInitComponent。
 
     Args:
-        arris: arrisCreateScripts.Api.ExtensionApi 模块(已 ImportModule)
+        arris: ExtensionApiFacade 实例(由 arrisMod.getServerExtensionApi() /
+            getClientExtensionApi() 取得)。本函数只用到 facade 的稳定公共面:
+            World / registerComponent / Component / Field / registerBlock,
+            和旧版 arrisCreateScripts.Api.ExtensionApi 模块接口一致。
         importMainModule: callable(relPath) → module, 形如 lambda p: serverApi.ImportModule("arrisCreateScripts." + p)
 
     Returns:
