@@ -9,6 +9,7 @@ SentryArmInteraction - 哨戒臂枪械装备交互（客户端）
 """
 
 from ...QuModLibs.Client import Listen, clientApi
+from ..Shared import SentryArmEpCompat as EpCompat
 
 SENTRY_ARM_BLOCK = "create:sentry_mechanical_arm"
 _EP_PACK = "EpJxkScript"
@@ -67,14 +68,48 @@ def _getEpApiInstance():
     return _epApi
 
 
+_epBullet = None
+_epBulletChecked = False
+
+
+def _getEpBullet():
+    # type: () -> object | None
+    """EP 子弹等级数据模块（纯数据，客户端进程同样加载）"""
+    global _epBullet, _epBulletChecked
+    if not _epBulletChecked:
+        _epBullet = clientApi.ImportModule(_EP_PACK + ".modCommon.epBullet")
+        _epBulletChecked = True
+    return _epBullet
+
+
 def _isGunClient(itemName):
     # type: (str) -> bool
+    """枪械判定（含 bind 变体枪兜底，与服务端 _isGun 一致）"""
     if not itemName:
         return False
-    instance = _getEpApiInstance()
-    if instance and hasattr(instance, "IsGun"):
-        return instance.IsGun(itemName)
-    return False
+    return EpCompat.isGunWithBind(_getEpApiInstance(), itemName)
+
+
+def _canLoadBullet(sentryComp, itemName):
+    # type: (object, str) -> bool
+    """手持物品可否装入哨戒臂库存：本枪弹药序列内任意等级子弹，
+    且库存为空或与已存等级同名（与服务端 RuntimePoint.insert 门禁一致）"""
+    if not sentryComp or not itemName:
+        return False
+    if not sentryComp.weaponItemName or not sentryComp.bulletType:
+        return False
+    if not EpCompat.isBulletAccepted(_getEpBullet(), sentryComp.bulletType, itemName):
+        return False
+    reserve = int(sentryComp.ammoReserve or 0)
+    storedType = getattr(sentryComp, "reserveBulletType", "") or sentryComp.bulletType
+    return reserve <= 0 or itemName == storedType
+
+
+def _bulletLevelTag(bulletName):
+    # type: (str) -> str
+    """HUD 等级标注：有等级数据的子弹显示 (LvN)，否则空串"""
+    level = EpCompat.bulletLevel(_getEpBullet(), bulletName)
+    return "(Lv{})".format(level) if level else ""
 
 
 @Listen("OnScriptTickClient")
@@ -106,9 +141,8 @@ def _onTickCheckCrosshair(args=None):
     sentryComp = _getSentryComp(blockPos)
     hasWeapon = bool(sentryComp and sentryComp.weaponItemName)
 
-    # 主提示：装枪 / 装填子弹 / 取枪
-    bulletType = sentryComp.bulletType if sentryComp else ""
-    canLoadAmmo = bool(itemName and hasWeapon and bulletType and itemName == bulletType)
+    # 主提示：装枪 / 装填子弹 / 取枪（等级弹判定与服务端 insert 门禁一致）
+    canLoadAmmo = _canLoadBullet(sentryComp, itemName)
 
     if itemName and _isGunClient(itemName):
         text = "[K]装备枪械"
@@ -123,11 +157,21 @@ def _onTickCheckCrosshair(args=None):
             _lastTargetPos = None
         return
 
-    # 有枪时附加弹药信息行
+    # 有枪时附加弹药信息行（含 EP+ 子弹等级标注）
     if sentryComp and sentryComp.weaponItemName and sentryComp.bulletType:
         mag = int(sentryComp.currentMagazine or 0)
         reserve = int(sentryComp.ammoReserve or 0)
-        text = "{}\n弹匣:{} 备用:{}".format(text, mag, reserve)
+        epBulletMod = _getEpBullet()
+        magBullet = ""
+        if mag > 0:
+            magList = EpCompat.parseMagList(getattr(sentryComp, "magazineBulletList", "") or "", mag)
+            magBullet = EpCompat.bulletAtIndex(epBulletMod, sentryComp.bulletType, magList[mag - 1])
+        reserveBullet = ""
+        if reserve > 0:
+            reserveBullet = getattr(sentryComp, "reserveBulletType", "") or sentryComp.bulletType
+        text = "{}\n弹匣:{}{} 备用:{}{}".format(
+            text, mag, _bulletLevelTag(magBullet), reserve, _bulletLevelTag(reserveBullet)
+        )
 
     # 目标或文本变化时更新（弹药数变化也刷新）
     stateKey = (blockPos, text)
@@ -202,11 +246,10 @@ def _onSentryKeyPress(args):
 
     sentryComp = _getSentryComp(blockPos)
     hasWeapon = bool(sentryComp and sentryComp.weaponItemName)
-    bulletType = sentryComp.bulletType if sentryComp else ""
 
     canEquip = itemName and _isGunClient(itemName)
     canTake = not itemName and hasWeapon
-    canLoadAmmo = bool(itemName and hasWeapon and bulletType and itemName == bulletType)
+    canLoadAmmo = _canLoadBullet(sentryComp, itemName)
     if not (canEquip or canTake or canLoadAmmo):
         return
 

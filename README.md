@@ -9,7 +9,8 @@
 >
 > **本项目同时是 arrisCreate 扩展 API 的官方示例**
 > 服务端入口 [ModServerSystem.py](SentryMechanicalArmBp/sentryMechanicalArmScripts/Content/Server/ModServerSystem.py) 展示了 `Api.ExtensionApi` 的完整用法：
-> `registerBlock` / `@registerComponent` / `arris.Component` / `arris.Field` / `onServerConfigFrozen` / 降级处理。
+> ready 事件订阅 / `registerBlock` / `@registerComponent` / `arris.Component` / `arris.Field` /
+> `hasCapability` + `registerArmPoint`（双端）/ 稳定符号直取 / 降级处理。
 > 配套文档见主 mod 仓库的 `docs/EXTENSION-API.md`。
 
 ---
@@ -35,8 +36,9 @@
 | 能力 | 说明 |
 | --- | --- |
 | 自动索敌 | 基于 EntityType 位掩码 (Monster / Hostile / Undead / Zombie / Skeleton / Arthropod) 扫描最近的敌对生物 |
-| 枪械装备 | 手持 EP 枪械对准方块按 `K` 键或 HUD 按钮即可装备；空手操作取回；保留枪械 `extraId` / 配件状态 |
+| 枪械装备 | 手持 EP 枪械对准方块按 `K` 键或 HUD 按钮即可装备；空手操作取回；保留枪械 `extraId` / 配件 / `userData`（弹药等级、皮肤）状态；bind 变体枪（so14 / holger26 / m4a1_ziptie）可正常识别 |
 | 弹药系统 | 弹匣 (`currentMagazine`) + 备用库存 (`ammoReserve`)；支持普通动力臂自动补弹 / 回收 |
+| 子弹等级 | 兼容 EP+ 子弹等级体系：接受 `EP_BULLET_SEQUENCE` 内任意等级弹，弹匣逐发记录等级、高级弹优先打出，伤害乘等级倍率（`BULLET_DATA['danger']`）；取出 / 掉落按实际等级返还不降级 |
 | 枪械属性 | 完整还原 EP 枪械行为：伤害、射速、栓动/点射/自动、暴击、霰弹、音效、配件加成 |
 | 应力联动 | `RPM = 0`、过载、红石锁定时立即停火 |
 | IK 瞄准 | 客户端按帧率 (60 Hz+) 插值偏航/俯仰角，服务端 lerp 同步；RPM 越高转速越快 |
@@ -59,6 +61,9 @@ arrisSentryMechanicalArm/
 │       ├── modMain.py                  # Mod 入口 (EasyMod 注册)
 │       ├── QuModLibs/                  # 趣帆 QuMod 框架
 │       └── Content/
+│           ├── Shared/                 # 双端共享（纯逻辑，依赖注入）
+│           │   ├── SentryArmRegistration.py # SentryArmComponent 定义 + ECS 注册
+│           │   └── SentryArmEpCompat.py     # EP+ 数据兼容层(子弹等级/bind 枪/fireSpeed)
 │           ├── Server/                 # 服务端逻辑
 │           │   ├── ModServerSystem.py       # ECS 组件 / 交互点 / 放置规则注册
 │           │   ├── SentryArmTargeting.py    # 状态机 + 扫描 + 射击
@@ -119,9 +124,12 @@ arrisSentryMechanicalArm/
 | `weaponItemName` | str | 装备的枪械 ID | O | O |
 | `weaponCustomTips` | str | 枪械自定义提示 | O | - |
 | `weaponExtraId` | str | 枪械配件/皮肤数据 | O | - |
+| `weaponUserData` | str | 枪械物品 userData 的 JSON 快照（取出时原样写回） | O | - |
 | `currentMagazine` | int | 弹匣剩余 | O | O |
 | `ammoReserve` | int | 备用弹药储量 | O | O |
-| `bulletType` | str | 接受的弹药物品 ID | O | O |
+| `bulletType` | str | 接受的弹药基础物品 ID（gun data.useBullet） | O | O |
+| `reserveBulletType` | str | 库存实际存放的子弹物品名（可为高等级变体） | O | O |
+| `magazineBulletList` | str | 弹匣逐发等级记录（EP bullet_list 数字串） | O | O |
 
 初始化时通过主包 `Api.ExtensionApi.registerBlock(...)` 一并注入 `SixFacing` / `Network` / `RPM` / `StressConsumer` / `CogwheelType` + 自定义 `SentryArmComponent`。
 
@@ -131,39 +139,35 @@ arrisSentryMechanicalArm/
 
 分两类：**推荐走公共 API** 和**主 mod 内部路径**（后者未来可能 rename，目前路径稳定）。
 
-### 公共 API — `arrisCreateScripts.Api.ExtensionApi`（Phase A/B）
+### 公共 API — `arrisCreateScripts.Api.ExtensionApi`（facade，v3）
 
 | 用法 | 用途 |
 | --- | --- |
-| `arris.registerBlock(blockName, components=[...])` | 方块的 ECS 组件配置（取代旧版 `SetCreateBlockInitComponents`） |
-| `@arris.registerComponent` + `arris.Component` / `arris.Field` | 定义 `SentryArmComponent` 并挂到主 mod World 注册表 |
-| `arris.onServerConfigFrozen(_doRegister)` | 兜底：所有 mod 加载完毕后重试注册 |
-
-### 稳定 Component 路径（EXTENSION-API.md "稳定 Component 清单"）
-
-| 模块 | 用途 |
-| --- | --- |
-| `...Content.Shared.Components.FacingComponent` | `SixFacingComponent` |
-| `...Content.Shared.Components.NetworkComponent` | `NetworkComponent` |
-| `...Content.Shared.Components.RPMComponent` | `RPMComponent` |
-| `...Content.Shared.Components.StressConsumerComponent` | `StressConsumerComponent(3)` — 3 SU/RPM |
-| `...Content.Shared.Components.CogwheelTypeComponent` | `CogwheelTypeComponent(CogSize.SMALL)` |
+| `ServerExtensionApiReady` / `ClientExtensionApiReady` 事件 + `ext.isFrozen()` 兜底 | 注册入口（EXTENSION-API.md §1-§3） |
+| `ext.registerBlock(blockName, components=[...])` | 方块的 ECS 组件配置 |
+| `@ext.registerComponent` + `ext.Component` / `ext.Field` | 定义 `SentryArmComponent` 并挂到主 mod World 注册表 |
+| `ext.registerSystem("ClientWorld", priority=2)` + `ext.System` | 客户端渲染系统挂进主包 ECS |
+| `ext.hasCapability("arm_points")` + `ext.registerArmPoint(块名, "take_deposit", 交互点)` | 动力臂交互点（**双端各注册一次**：服务端带 RuntimePoint 实例，客户端只传块名 + 模式） |
+| `ext.SixFacingComponent` / `ext.NetworkComponent` / `ext.RPMComponent` / `ext.StressConsumerComponent` / `ext.CogwheelTypeComponent` / `ext.CogSize` | 稳定符号直取（§5.1，替代旧版逐个 ImportModule 子模块） |
 
 ### 主 mod 内部路径（可用但非公共承诺）
 
 | 集成方式 | 模块 | 用途 |
 | --- | --- | --- |
-| `Registry.registerBlockType` / `registerRuntimePoint` | `...Server.Helpers.RuntimePointRegistry` | 让普通动力臂识别哨戒臂为 "take_deposit" 交互点 |
 | `PlacementRulesMeta._registry` | `...Server.Placements.Server` | 顶/底面放置规则（主 mod 未来可能提供公开 API） |
 | `EventRegistry("BlockRemoveServerEvent")` | `...Server.EventRegistry` | 方块破坏时掉落武器 |
 | `RotationRenderSystem._rotationOffset` | `...Client.Systems.RotationRenderSystem` | 齿轮 22.5° 对齐旋转 |
+| `rescueMissingVisuals` / `forgetVisualRescue` / `resetVisualRescue` | `...Content.Client.ClientVisualRescue` | 客户端实体自愈补建（与主包大水车/动力臂共用一套节流与放弃记账） |
+| `ServerWorld()` / `ClientWorld()` 单例 | `...Content.Server.ServerWorld` / `...Content.Client.ClientWorld` | 按坐标取 ECS 实体读写 `SentryArmComponent` |
 
 ### EP 军工
 
 | 集成方式 | 模块 | 用途 |
 | --- | --- | --- |
-| `GetEplisItemData` | `EpJxkScriptClientSystem` | 读取配件加成后的完整枪械属性 |
-| `epApiServer.Shoot` | `EpJxkScript.Api.EpApiServer` | 服务端权威发射 |
+| `GetEplisItemData` | `EpJxkScriptClientSystem` | 读取配件加成后的完整枪械属性（bind 变体枪会 KeyError，由下行兜底） |
+| `epApiClient.GetGunData`（经 `Shared/SentryArmEpCompat` bind 合并） | `EpJxkScript.Api.EpApiClient` | bind 变体枪的有效数据还原 / 无配件基础属性兜底 |
+| `epBullet.EP_BULLET_SEQUENCE` / `BULLET_DATA` | `EpJxkScript.modCommon.epBullet` | 子弹等级序列与等级数据（伤害倍率；按调用时读取，兼容附属包运行时扩展） |
+| `epApiServer.Shoot` | `EpJxkScript.Api.EpApiServer` | 服务端权威发射（伤害已预乘子弹等级倍率） |
 
 ---
 
@@ -181,8 +185,8 @@ arrisSentryMechanicalArm/
 
 普通机械臂识别哨戒臂上方 1.5 格的交互点：
 
-- **insert**: 只接受 `comp.bulletType` 匹配的弹药物品；上限 = `magazine × 5`
-- **extract**: 只从 `ammoReserve` 取料，不动已上膛的 `currentMagazine`
+- **insert**: 接受该枪弹药序列内任意等级子弹（库存同时只存一种等级，取空后可换）；上限 = `magazine × 5`
+- **extract**: 只从 `ammoReserve` 按实际存放等级取料，不动已上膛的 `currentMagazine`
 
 ### 红石信号
 
@@ -208,6 +212,9 @@ arrisSentryMechanicalArm/
 - 热重载防重复：`World.getComponentClass("SentryArmComponent")` 命中已存在的类则复用
 - 枪械缓存热更新：`_gunInfoCache` 以 `weaponItemName` 为 key，运行时换枪自动刷新
 - 客户端实体生命周期跟随 ECS 活跃集：新增 → `CreateClientEntityByTypeStr`；移除 → `DestroyClientEntity`
+- 客户端实体自愈：首建静默失败（blockPos 未就位 / LoaderSystem 未就绪 / 引擎返回 None）由主包
+  `ClientVisualRescue` 节流补建（20 tick 一扫、单次限 2 个、连败 10 次放弃）；维度切换清空全部映射，
+  维度回切 / 区块重激活走 `_reactivatedEntityIds` 分支补建并强制重推渲染参数
 
 ---
 

@@ -10,6 +10,7 @@ SentryArmTargeting - 哨戒臂目标扫描 + 瞄准 + 射击（服务端）
 import math
 
 from ...QuModLibs.Server import AllowCall, Call, serverApi
+from ..Shared import SentryArmEpCompat as EpCompat
 
 SENTRY_ARM_BLOCK = "create:sentry_mechanical_arm"
 _MAIN_PACK = "arrisCreateScripts"
@@ -158,6 +159,10 @@ SERVER_LERP_BASE = 1.0 / 1024.0
 _serverWorld = None
 _epApi = None
 _epApiChecked = False
+_epBullet = None
+_epBulletChecked = False
+# 旧存档 bulletType 自愈只补试一次的实体集合
+_bulletTypeHealTried = set()
 
 
 def _getServerWorld():
@@ -180,6 +185,16 @@ def _getEpApiServer():
     return _epApi
 
 
+def _getEpBullet():
+    # type: () -> object | None
+    """EP 子弹等级数据模块（纯数据，EP 双端都会加载；服务端各模块共用此缓存）"""
+    global _epBullet, _epBulletChecked
+    if not _epBulletChecked:
+        _epBullet = serverApi.ImportModule(_EP_PACK + ".modCommon.epBullet")
+        _epBulletChecked = True
+    return _epBullet
+
+
 def _onServerTick(args=None):
     world = _getServerWorld()
     if not world:
@@ -199,6 +214,14 @@ def _tickSentryArm(entity):
 
     rpm = netComp.theoreticalSpeed if netComp else 0.0
     hasWeapon = bool(comp.weaponItemName)
+
+    # 旧版 bug 自愈：bind 变体枪（so14 等）曾解析不出 useBullet，老存档里
+    # bulletType 为空 → 永远无法装填。每实体每会话补试一次。
+    if hasWeapon and not comp.bulletType and entity.id not in _bulletTypeHealTried:
+        _bulletTypeHealTried.add(entity.id)
+        from .SentryArmInteraction import _resolveBulletType
+
+        comp.bulletType = _resolveBulletType(comp.weaponItemName)
 
     # 前置条件（注：currentMagazine/ammoReserve 是 persistent 字段，由装卸枪路径管理，
     # 这里临时失效不清，恢复后继续用原弹药）
@@ -326,23 +349,17 @@ def _tickShooting(entity, comp):
 
     # 弹药前置：currentMagazine == 0 时尝试从库存补满（初次装枪 / 换枪后）
     if int(comp.currentMagazine or 0) <= 0:
-        reserve = int(comp.ammoReserve or 0)
-        if reserve > 0:
-            magCap = max(1, int(gunInfo.get("magazine", 30)))
-            transfer = min(magCap, reserve)
-            comp.currentMagazine = transfer
-            comp.ammoReserve = reserve - transfer
+        if _refillMagazine(comp, gunInfo) > 0:
             # 装填耗时 + 播放上弹音效
             reloadSec = float(gunInfo.get("reloadEmptyTick", 2.0))
             _fireCooldowns[entity.id] = max(1, int(reloadSec * 30.0))
             comp.state = COOLDOWN
             _playReloadSound(entity, gunInfo)
-            return
         else:
             # 无弹药可用 → 等补给
             comp.state = WAITING_AMMO
             comp.hasTarget = False
-            return
+        return
 
     # 执行射击
     api = _getEpApiServer()
@@ -367,24 +384,40 @@ def _tickShooting(entity, comp):
         _fireCooldowns.pop(entity.id, None)
         return
 
+    # 当前发弹种 = 弹匣逐发等级记录的末位（对齐 EP gunFire.GetEpBulletData：
+    # 降序数字串从末尾消耗，高级弹优先打出），伤害乘该等级倍率
+    # （对齐 gunFire: danger *= bulletData['danger']）
+    mag = int(comp.currentMagazine or 0)
+    magList = EpCompat.parseMagList(getattr(comp, "magazineBulletList", "") or "", mag)
+    epBulletMod = _getEpBullet()
+    shotIndex = magList[mag - 1] if mag > 0 else 0
+    shotBullet = EpCompat.bulletAtIndex(epBulletMod, comp.bulletType, shotIndex)
+    damageMult = EpCompat.bulletDamageMultiplier(epBulletMod, shotBullet)
+    shootInfo = gunInfo
+    if damageMult != 1.0:
+        shootInfo = dict(gunInfo)
+        shootInfo["damage"] = gunInfo.get("damage", 0) * damageMult
+
     shooterPos = _computeMuzzle(entity)
     api.Shoot(
         shooterPos=shooterPos,
         targetPos=targetPos,
-        gunInfo=gunInfo,
+        gunInfo=shootInfo,
         dimensionId=entity.dimensionId,
         shooterEntityId=None,
         playSound=True,
     )
 
-    # 扣减弹药（persistent 字段 comp.currentMagazine）
-    comp.currentMagazine = int(comp.currentMagazine or 0) - 1
+    # 扣减弹药（persistent 字段 comp.currentMagazine + 逐发等级记录同步弹出）
+    comp.currentMagazine = mag - 1 if mag > 0 else 0
+    comp.magazineBulletList = EpCompat.magListToStr(magList[: comp.currentMagazine])
     ammo = comp.currentMagazine
-    magazine = max(1, int(gunInfo.get("magazine", 30)))
 
     # 计算冷却（对齐 Eplus 玩家射击 fireSpeed/boltSpeed/reload 完整周期）
-    fireSpeed = int(gunInfo.get("fireSpeed", 4))
-    boltSpeed = int(gunInfo.get("boltSpeed", 0))
+    # fireSpeed 双语义：<1 = 秒 / >=1 = tick（EP 新版自动枪普遍是秒值，
+    # 直接 int() 会截成 0 → 射速失控），统一换算成 tick
+    fireSpeed = EpCompat.fireSpeedToTicks(gunInfo.get("fireSpeed", 4))
+    boltSpeed = int(float(gunInfo.get("boltSpeed", 0) or 0))
     fireType = gunInfo.get("fireType", 0)
     # 每发之间的基础冷却（fireType 决定栓动/点射/自动）
     if fireType == 1:
@@ -439,15 +472,9 @@ def _tickCooldown(entity, comp):
 
     # 弹匣空 → 尝试从库存补弹（换弹冷却刚结束）
     if int(comp.currentMagazine or 0) <= 0:
-        reserve = int(comp.ammoReserve or 0)
-        if reserve > 0:
-            gunInfo = _getOrCacheGunInfo(entity, comp)
-            magCap = max(1, int(gunInfo.get("magazine", 30))) if gunInfo else 30
-            transfer = min(magCap, reserve)
-            comp.currentMagazine = transfer
-            comp.ammoReserve = reserve - transfer
-        # 若 reserve 冷却期内被玩家用动力臂取空 → 转 WAITING
-        else:
+        gunInfo = _getOrCacheGunInfo(entity, comp)
+        # 补不进 = reserve 冷却期内被玩家用动力臂取空 → 转 WAITING
+        if _refillMagazine(comp, gunInfo) <= 0:
             comp.state = WAITING_AMMO
             comp.hasTarget = False
             _trackedTargets.pop(eid, None)
@@ -469,21 +496,53 @@ def _tickCooldown(entity, comp):
 def _tickWaitingAmmo(entity, comp):
     # type: (object, object) -> None
     """弹匣空 + 库存空：不动，等动力臂补弹。有货即转 SCANNING（带换弹冷却 + 音效）"""
-    if int(comp.ammoReserve or 0) > 0:
-        # 有货 → 先从库存补弹匣，再进入换弹冷却（不立刻 SCANNING，保持上弹动画/音效感）
-        gunInfo = _getOrCacheGunInfo(entity, comp)
-        magCap = max(1, int(gunInfo.get("magazine", 30))) if gunInfo else 30
-        transfer = min(magCap, int(comp.ammoReserve))
-        comp.currentMagazine = transfer
-        comp.ammoReserve = int(comp.ammoReserve) - transfer
-        # 换弹冷却 + 音效
-        if gunInfo:
-            reloadSec = float(gunInfo.get("reloadEmptyTick", 2.0))
-            _fireCooldowns[entity.id] = max(1, int(reloadSec * 30.0))
-            _playReloadSound(entity, gunInfo)
-            comp.state = COOLDOWN
-        else:
-            comp.state = SCANNING
+    if int(comp.ammoReserve or 0) <= 0:
+        return
+    # 有货 → 先从库存补弹匣，再进入换弹冷却（不立刻 SCANNING，保持上弹动画/音效感）
+    gunInfo = _getOrCacheGunInfo(entity, comp)
+    if _refillMagazine(comp, gunInfo) <= 0:
+        return
+    # 换弹冷却 + 音效
+    if gunInfo:
+        reloadSec = float(gunInfo.get("reloadEmptyTick", 2.0))
+        _fireCooldowns[entity.id] = max(1, int(reloadSec * 30.0))
+        _playReloadSound(entity, gunInfo)
+        comp.state = COOLDOWN
+    else:
+        comp.state = SCANNING
+
+
+# ==================== 弹药装填 ====================
+
+
+def _refillMagazine(comp, gunInfo):
+    # type: (object, dict | None) -> int
+    """
+    从库存（ammoReserve）向弹匣转移弹药，维护逐发等级记录（magazineBulletList）。
+
+    转移的一批全部是库存当前存放的等级（reserveBulletType），与弹匣残留
+    子弹按 EP 规范降序合并。返回实际转移发数；库存清空时同步清
+    reserveBulletType（允许动力臂换存其他等级）。gunInfo 缺失时容量兜底 30。
+    """
+    reserve = int(comp.ammoReserve or 0)
+    if reserve <= 0:
+        return 0
+    magCap = max(1, int(gunInfo.get("magazine", 30))) if gunInfo else 30
+    mag = int(comp.currentMagazine or 0)
+    transfer = min(max(0, magCap - mag), reserve)
+    if transfer <= 0:
+        return 0
+    epBulletMod = _getEpBullet()
+    reserveBullet = getattr(comp, "reserveBulletType", "") or comp.bulletType
+    addIndex = EpCompat.bulletIndexInSequence(epBulletMod, comp.bulletType, reserveBullet)
+    magList = EpCompat.parseMagList(getattr(comp, "magazineBulletList", "") or "", mag)
+    magList = EpCompat.mergeMagList(magList, addIndex, transfer)
+    comp.currentMagazine = mag + transfer
+    comp.magazineBulletList = EpCompat.magListToStr(magList)
+    comp.ammoReserve = reserve - transfer
+    if reserve - transfer <= 0:
+        comp.reserveBulletType = ""
+    return transfer
 
 
 # ==================== 瞄准对齐检测 ====================

@@ -6,7 +6,7 @@ SentryArmPlacement - 哨戒机械臂放置规则
 - 点击方块下表面 → ceiling 模式
 - 其他面 → floor 模式
 
-通过 ModServerSystem._onAllModsLoaded 手动注入到主包
+通过 ModServerSystem._doRegister 手动注入到主包
 PlacementRulesMeta._registry，而非元类自动注册。
 """
 

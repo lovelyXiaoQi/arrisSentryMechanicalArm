@@ -19,8 +19,8 @@ SentryArmRegistration - 哨戒动力臂 ECS 注册（双端共享）
 SENTRY_ARM_BLOCK = "create:sentry_mechanical_arm"
 
 
-def registerSentryArmEcs(arris, importMainModule):
-    # type: (object, callable) -> object | None
+def registerSentryArmEcs(arris):
+    # type: (object) -> object | None
     """
     定义并注册 SentryArmComponent,把哨戒臂方块加入 CreateBlockInitComponent。
 
@@ -28,11 +28,11 @@ def registerSentryArmEcs(arris, importMainModule):
         arris: ExtensionApiFacade 实例(由 arrisMod.getServerExtensionApi() /
             getClientExtensionApi() 取得)。本函数只用到 facade 的稳定公共面:
             World / registerComponent / Component / Field / registerBlock,
-            和旧版 arrisCreateScripts.Api.ExtensionApi 模块接口一致。
-        importMainModule: callable(relPath) → module, 形如 lambda p: serverApi.ImportModule("arrisCreateScripts." + p)
+            以及 §5.1 稳定符号直取(ext.SixFacingComponent 等,由 facade
+            __getattr__ 按 components → base → behaviours 的 __all__ 查找)。
 
     Returns:
-        SentryArmComponent class,或 None 表示主 mod 的稳定 Components 还没就绪。
+        SentryArmComponent class,或 None 表示 facade 不可用。
     幂等:重复调用为 no-op。
     """
     # -------- Step 1: 定义并注册 SentryArmComponent --------
@@ -59,11 +59,24 @@ def registerSentryArmEcs(arris, importMainModule):
             weaponItemName = arris.Field(default="", persistent=True, synced=True)
             weaponCustomTips = arris.Field(default="", persistent=True)
             weaponExtraId = arris.Field(default="", persistent=True)
+            # 枪械物品 userData 的 JSON 快照(bullet_list / bullet_priority /
+            # ep_skin 等 EP 侧状态)，取出/掉落时原样写回，避免弹药等级与皮肤丢失
+            weaponUserData = arris.Field(default="", persistent=True)
 
             # ---- 弹药系统 ----
+            # 注:新增字段后热重载会复用旧 Component 类(见上方 getComponentClass
+            # 判重)，旧类实例上读这些字段需 getattr 兜底、写入仅本次会话有效；
+            # 重进世界后按新类注册即恢复完整 persistent/synced 语义
             currentMagazine = arris.Field(default=0, persistent=True, synced=True)
             ammoReserve = arris.Field(default=0, persistent=True, synced=True)
             bulletType = arris.Field(default="", persistent=True, synced=True)
+            # EP+ 子弹等级支持:
+            # reserveBulletType: 库存(ammoReserve)实际存放的子弹物品名，可为
+            #   高等级变体；空串 = 按 bulletType(基础弹)处理。库存同时只存一种。
+            reserveBulletType = arris.Field(default="", persistent=True, synced=True)
+            # magazineBulletList: 弹匣逐发等级记录，EP bullet_list 规范数字串
+            #   (每位 = 弹药序列下标，降序排列，开火从末尾消耗)
+            magazineBulletList = arris.Field(default="", persistent=True, synced=True)
 
             # ---- 自定义索敌 ----
             # 0 = DEFAULT (按 _HOSTILE_FAMILIES 索敌)
@@ -74,26 +87,18 @@ def registerSentryArmEcs(arris, importMainModule):
 
         componentClass = SentryArmComponent
 
-    # -------- Step 2: 从主 mod 按需拉取稳定 Component --------
-    facingMod = importMainModule("Content.Shared.Components.FacingComponent")
-    networkMod = importMainModule("Content.Shared.Components.NetworkComponent")
-    rpmMod = importMainModule("Content.Shared.Components.RPMComponent")
-    stressConsumerMod = importMainModule("Content.Shared.Components.StressConsumerComponent")
-    cogwheelTypeMod = importMainModule("Content.Shared.Components.CogwheelTypeComponent")
-
-    if not all([facingMod, networkMod, rpmMod, stressConsumerMod, cogwheelTypeMod]):
-        return None
-
-    # -------- Step 3: 在 CreateBlockInitComponent 注册方块 ECS 配置 --------
+    # -------- Step 2+3: 在 CreateBlockInitComponent 注册方块 ECS 配置 --------
+    # 主包稳定 Component 全部走 facade 直取(§5.1 稳定符号清单,
+    # 不再 ImportModule 内部子模块路径)。
     # arris.registerBlock 是先到先得 + warn,重复调用安全
     arris.registerBlock(
         SENTRY_ARM_BLOCK,
         components=[
-            (facingMod.SixFacingComponent,),
-            (networkMod.NetworkComponent,),
-            (rpmMod.RPMComponent,),
-            (stressConsumerMod.StressConsumerComponent, 3),  # 3 SU/RPM 消耗
-            (cogwheelTypeMod.CogwheelTypeComponent, cogwheelTypeMod.CogSize.SMALL),
+            (arris.SixFacingComponent,),
+            (arris.NetworkComponent,),
+            (arris.RPMComponent,),
+            (arris.StressConsumerComponent, 3),  # 3 SU/RPM 消耗
+            (arris.CogwheelTypeComponent, arris.CogSize.SMALL),
             (componentClass,),
         ],
     )

@@ -8,7 +8,7 @@ ModServerSystem - 哨戒机械臂服务端入口
 职责:
     1. 通过 Api.ExtensionApi 向主包注册方块的 ECS 组件配置 (registerBlock)
     2. 定义并注册自定义 Component (SentryArmComponent) 到主 mod World 注册表
-    3. 注册动力臂交互点 (RuntimePointRegistry，主 mod 内部 API 但路径稳定)
+    3. 注册动力臂交互点 (ext.registerArmPoint，v3 公共接口，capability "arm_points")
     4. 注册顶/底面放置规则 (PlacementRulesMeta，主 mod 内部 API)
 
 入口方式: 监听主 mod 的 ServerExtensionApiReady 事件,handler 内通过 args["extension"]
@@ -79,19 +79,22 @@ def _doRegister(ext):
     # 提前 return,渲染系统永远不会被通知)。
     from ..Shared.SentryArmRegistration import registerSentryArmEcs
 
-    componentClass = registerSentryArmEcs(ext, _importMainModule)
+    componentClass = registerSentryArmEcs(ext)
     if componentClass is None:
         return False
 
-    # -------- Step 4: 注册动力臂交互点（主 mod 内部 API） --------
-    # RuntimePointRegistry 不在 Api.ExtensionApi 公共面中，但模块路径稳定。
-    # 让普通机械臂把哨戒臂识别为 "take_deposit" 交互点（填弹 / 取弹）。
-    runtimePointRegistry = _importMainModule("Content.Server.Helpers.RuntimePointRegistry")
-    if runtimePointRegistry is not None:
+    # -------- Step 4: 注册动力臂交互点（v3 公共接口 arm_points） --------
+    # 一次调用合并原本分开的"方块类型 + 运行时交互点"两处注册，让普通动力臂
+    # 把哨戒臂识别为 "take_deposit" 交互点（填弹 / 取弹）。
+    # ⚠ 双端各注册一次：这里是服务端（决定真的能搬运），客户端那份在
+    # ModClientSystem._doRegisterClient（决定玩家手持动力臂能否点中哨戒臂），
+    # 见主包 docs/EXTENSION-API.md §15.8。
+    if ext.hasCapability("arm_points"):
         from .SentryArmRuntimePoint import SentryArmRuntimePoint
 
-        runtimePointRegistry.registerBlockType(SENTRY_ARM_BLOCK, "take_deposit")
-        runtimePointRegistry.registerRuntimePoint(SENTRY_ARM_BLOCK, SentryArmRuntimePoint())
+        result = ext.registerArmPoint(SENTRY_ARM_BLOCK, "take_deposit", SentryArmRuntimePoint())
+        if not result.get("ok"):
+            print("[sentry] registerArmPoint failed: {}".format(result.get("error")))
 
     # -------- Step 5: 注册放置规则（主 mod 内部 API） --------
     # 顶/底面放置走主 mod 的 PlacementRulesMeta._registry（当前是私有属性，

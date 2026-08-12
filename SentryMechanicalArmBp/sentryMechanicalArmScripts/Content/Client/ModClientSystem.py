@@ -19,6 +19,7 @@ ModClientSystem - 哨戒机械臂客户端入口
 """
 
 from ...QuModLibs.Client import AllowCall, Call, clientApi
+from ..Shared import SentryArmEpCompat as EpCompat
 
 # 子模块导入(触发各自的注册装饰器/事件订阅)
 from . import SentryArmInteraction as _sentryInteraction  # noqa: F401
@@ -26,6 +27,7 @@ from . import SentryTargetManageUi as _sentryTargetManageUi  # noqa: F401
 from . import TargetBoardClient as _targetBoardClient  # noqa: F401
 from . import SentryArmRenderSystem as _sentryArmRenderSystem  # noqa: F401
 
+SENTRY_ARM_BLOCK = "create:sentry_mechanical_arm"
 _MAIN_PACK = "arrisCreateScripts"
 _EP_PACK = "EpJxkScript"
 
@@ -51,10 +53,6 @@ levelId = clientApi.GetLevelId()
 _clientRegistered = False
 
 
-def _importMainModuleClient(path):
-    return clientApi.ImportModule(_MAIN_PACK + "." + path)
-
-
 def _doRegisterClient(ext):
     # type: (object) -> bool
     """客户端 ECS 注册。幂等。"""
@@ -65,9 +63,17 @@ def _doRegisterClient(ext):
         return False
     from ..Shared.SentryArmRegistration import registerSentryArmEcs
 
-    componentClass = registerSentryArmEcs(ext, _importMainModuleClient)
+    componentClass = registerSentryArmEcs(ext)
     if componentClass is None:
         return False
+
+    # 客户端这份 arm_points 注册决定玩家手持动力臂能否【点中】哨戒臂
+    # （服务端那份决定真的能搬运，在 ModServerSystem._doRegister）。
+    # 联机时加入玩家是独立进程，缺这份注册就永远选不中哨戒臂当交互点。
+    # 客户端构造不出 RuntimePoint（基类在服务端模块），只传方块名 + 模式。
+    if ext.hasCapability("arm_points"):
+        ext.registerArmPoint(SENTRY_ARM_BLOCK, "take_deposit")
+
     _clientRegistered = True
     print("[sentry] client registered via arrisCreate ExtensionApi")
     return True
@@ -116,7 +122,10 @@ _setupRegistration()
 
 
 def _registerMolangQueries():
-    """变量名对齐资源包 animation: arm_* 前缀(per-entity, 不与主包冲突)"""
+    """变量名对齐资源包 animation: arm_* 前缀。
+    注意这 7 个名字与主包 MechanicalArmRenderSystem 注册的完全同名——
+    重复 Register 幂等，Set 按客户端实体逐个生效互不干扰；
+    主包缺席/加载顺序靠后时本注册是必需兜底，不可删。"""
     queryComp = compFactory.CreateQueryVariable(levelId)
     queryComp.Register("query.mod.arm_base_angle", 0.0)
     queryComp.Register("query.mod.arm_lower_angle", 0.0)
@@ -171,6 +180,7 @@ def sentryArmFetchGunInfo(entityId, itemName, customTips, extraId):
     epSystem = clientApi.GetSystem(_EP_PACK, "EpJxkScriptClientSystem")
     if not epSystem or not hasattr(epSystem, "GetEplisItemData"):
         return
+    allData = None
     try:
         allData = epSystem.GetEplisItemData(
             {
@@ -180,25 +190,38 @@ def sentryArmFetchGunInfo(entityId, itemName, customTips, extraId):
             }
         )
     except Exception:
-        return
-    if not allData or "data" not in allData:
+        # bind 变体枪（so14 等自身 JSON 无顶层 type）在 EP 侧 KeyError('type')，
+        # 走下方合并数据兜底
+        allData = None
+
+    epApiMod = clientApi.ImportModule(_EP_PACK + ".Api.EpApiClient")
+    epApiInstance = getattr(epApiMod, "epApiClient", None) if epApiMod else None
+
+    if allData and "data" in allData:
+        d = allData["data"]
+    else:
+        # 兜底：按 EP 的 bind 合并语义直接从 EP_JG_DATA 构造基础数据
+        # （无配件加成——EP 自身对 bind 枪的配件路径同样是坏的）
+        d = None
+        if epApiInstance is not None and hasattr(epApiInstance, "GetGunData"):
+            merged = EpCompat.resolveGunData(epApiInstance.GetGunData, itemName)
+            if merged:
+                d = merged.get("data") or None
+    if not d:
         return
 
-    d = allData["data"]
     shootSound = d.get("shootSound", [])
     shootSoundX = d.get("shootSoundX", [])
     hasShootX = d.get("shootX", False)
     soundList = shootSoundX if hasShootX and shootSoundX else shootSound
 
     # reloadSound 在 GetEplisItemData 的配件加成路径里会被覆盖成 ['', '']。
-    # 兜底:从未经配件处理的 EpApiClient.GetGunInfo 读原始 JSON 值。
+    # 兜底:从未经配件处理的 EpApiClient 实例读原始 JSON 值（bind 枪同样覆盖）。
     reloadSound = d.get("reloadSound", [])
     if not reloadSound or all(not s for s in reloadSound):
-        mod = clientApi.ImportModule(_EP_PACK + ".Api.EpApiClient")
-        if mod and hasattr(mod, "GetGunInfo"):
-            rawInfo = mod.GetGunInfo(itemName)
-            if rawInfo:
-                reloadSound = rawInfo.get("reloadSound", []) or reloadSound
+        rawInfo = EpCompat.getGunInfoWithBind(epApiInstance, itemName)
+        if rawInfo:
+            reloadSound = rawInfo.get("reloadSound", []) or reloadSound
 
     gunInfo = {
         "name": itemName,

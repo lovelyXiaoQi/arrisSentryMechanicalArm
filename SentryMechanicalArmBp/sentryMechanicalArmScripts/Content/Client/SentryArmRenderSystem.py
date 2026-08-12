@@ -12,10 +12,17 @@ SentryArmRenderSystem - 哨戒动力臂客户端渲染系统
 (后者在远端客户端首次同步时可能漏掉实体导致看不到动力臂模型)。
 
 生命周期:
-    onEntityAdded   → CreateClientEntityByTypeStr 生成本地视觉实体
-    onEntityRemoved → DestroyClientEntity
-    update(dt)      → 每 tick 同步 RPM / 武器 / 瞄准目标角度
-    updateFrame()   → 渲染帧(60+ Hz) dt-lerp 写入 Molang query
+    onEntityAdded        → CreateClientEntityByTypeStr 生成本地视觉实体
+    onEntityRemoved      → DestroyClientEntity + 清自愈重试记账
+    onDimensionChanged   → 引擎已销毁全部客户端实体,清空映射与记账
+    update(dt)           → 重激活重推 + 自愈补建 + 每 tick 同步 RPM / 武器 / 瞄准角度
+    updateFrame()        → 渲染帧(60+ Hz) dt-lerp 写入 Molang query
+
+客户端实体自愈(对齐主包 MechanicalArmRenderSystem + ClientVisualRescue):
+    onEntityAdded 一次性建实体有三个静默失败出口(blockPos 未就位 / LoaderSystem
+    未就绪 / 引擎返回 None),任一命中该实体就永远没有 visual。补建统一走主包
+    ClientVisualRescue.rescueMissingVisuals —— 节流(20 tick 一扫)、限额(单次 2 个)、
+    连败放弃(10 次),替代旧版"每 tick 无限重试"的裸循环。
 """
 
 import math
@@ -70,6 +77,11 @@ def _doRegister(ext):
     if System is None or registerSystem is None:
         return False
 
+    # 主包客户端实体补建共用体(节流 / 限额 / 连败放弃的重试记账都在主包侧,
+    # 与大水车/动力臂等主包渲染系统共享同一套语义)。internal 路径,但注册
+    # 集中在本函数内,主包重构时只改这一处。
+    rescueMod = clientApi.ImportModule(_MAIN_PACK + ".Content.Client.ClientVisualRescue")
+
     @registerSystem("ClientWorld", priority=2)
     class SentryArmRenderSystem(System):
         requiredComponents = ["SentryArmComponent"]
@@ -102,24 +114,65 @@ def _doRegister(ext):
 
         def onEntityRemoved(self, entity):
             System.onEntityRemoved(self, entity)
-            if entity.blockName != SENTRY_ARM_BLOCK:
-                return
+            # 无条件清理:没有 visual 时 destroy 是 no-op;forget 必须执行,
+            # 否则原位重放的方块(实体 id 由坐标派生,跨重建相同)会继承上一轮
+            # 失败计数,甚至直接落在放弃名单里再也不补建
             self._destroyClientEntity(entity.id)
+            if rescueMod is not None:
+                rescueMod.forgetVisualRescue(self, entity.id)
+
+        def onDimensionChanged(self, toDimensionId):
+            # 维度切换时引擎已销毁本进程所有 CreateClientEntityByTypeStr 实体,
+            # 映射与缓存全部作废 —— 只清表,不要对死实体调 Destroy/解绑。
+            # 不清的话回到原维度后 _clientEntityIds 里全是死 id,
+            # update 以为 visual 还在,模型永远不重建
+            if rescueMod is not None:
+                rescueMod.resetVisualRescue(self)
+            self._clientEntityIds.clear()
+            self._lastRpm.clear()
+            self._lastWeapon.clear()
+            self._weaponModelIds.clear()
+            self._currentBaseAngle.clear()
+            self._currentHeadAngle.clear()
+            self._renderTargets.clear()
 
         # ---- 每 tick 同步 ----
 
         def update(self, dt=0):
+            # 重激活(维度回切 / 走远后重回模拟距离):visual 可能已被引擎销毁,
+            # 缺失的补建,存活的强制重推一次渲染参数(RPM uniform 等不在
+            # Molang query 里的状态不会自动恢复)
+            for entityId in self._world._reactivatedEntityIds:
+                if entityId not in self._matchedEntityIds:
+                    continue
+                entity = self._world.getEntity(entityId)
+                if not entity or entity.blockName != SENTRY_ARM_BLOCK:
+                    continue
+                clientEid = self._clientEntityIds.get(entityId)
+                if not clientEid:
+                    self._createClientEntity(entity)
+                else:
+                    self._refreshEntity(entity, clientEid, force=True)
+                    self._refreshWeapon(entity, clientEid)
+
+            # 自愈补建:onEntityAdded 那一刻 blockPos / LoaderSystem / 引擎未就绪
+            # 导致的首建失败,由主包共用体按节流+限额+放弃上限统一重试。
+            # _createClientEntity 成功时内部自带 force 刷新 + 武器绑定,
+            # 无需像主包动力臂那样对返回列表再补推一次
+            if rescueMod is not None:
+                rescueMod.rescueMissingVisuals(
+                    self,
+                    self._clientEntityIds,
+                    self._createClientEntity,
+                    predicate=lambda e: e.blockName == SENTRY_ARM_BLOCK,
+                )
+
             for entity in self.getEntities():
                 if entity.blockName != SENTRY_ARM_BLOCK:
                     continue
                 clientEid = self._clientEntityIds.get(entity.id)
                 if not clientEid:
-                    # hydrate 时 blockPos 还没就绪导致初次 _createClientEntity 失败
-                    # → 这一 tick 重试
-                    self._createClientEntity(entity)
-                    clientEid = self._clientEntityIds.get(entity.id)
-                if not clientEid:
-                    continue
+                    continue  # 等自愈补建,不在这里裸重试
                 self._refreshEntity(entity, clientEid, force=False)
                 self._refreshWeapon(entity, clientEid)
                 self._updateAimAngles(entity, clientEid)
