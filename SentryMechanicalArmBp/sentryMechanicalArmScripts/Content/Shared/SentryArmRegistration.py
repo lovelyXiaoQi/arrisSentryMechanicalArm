@@ -70,6 +70,11 @@ def registerSentryArmEcs(arris):
             currentMagazine = arris.Field(default=0, persistent=True, synced=True)
             ammoReserve = arris.Field(default=0, persistent=True, synced=True)
             bulletType = arris.Field(default="", persistent=True, synced=True)
+            # 装枪时同步持久化的弹匣容量(gun data.magazine)。库存容量 =
+            # magazineSize × 5。必须是持久字段而非异步 gunInfo 缓存——
+            # 动力臂 collect 的 simulate 预算和 deposit 的真实入库若读到
+            # 不同容量,差额会永久滞留在动力臂爪子里(玩家视角=吞子弹)
+            magazineSize = arris.Field(default=0, persistent=True)
             # EP+ 子弹等级支持:
             # reserveBulletType: 库存(ammoReserve)实际存放的子弹物品名，可为
             #   高等级变体；空串 = 按 bulletType(基础弹)处理。库存同时只存一种。

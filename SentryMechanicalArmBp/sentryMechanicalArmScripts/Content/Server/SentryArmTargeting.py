@@ -161,8 +161,8 @@ _epApi = None
 _epApiChecked = False
 _epBullet = None
 _epBulletChecked = False
-# 旧存档 bulletType 自愈只补试一次的实体集合
-_bulletTypeHealTried = set()
+# 旧存档武器数据（bulletType / magazineSize）自愈只补试一次的实体集合
+_weaponHealTried = set()
 
 
 def _getServerWorld():
@@ -215,13 +215,23 @@ def _tickSentryArm(entity):
     rpm = netComp.theoreticalSpeed if netComp else 0.0
     hasWeapon = bool(comp.weaponItemName)
 
-    # 旧版 bug 自愈：bind 变体枪（so14 等）曾解析不出 useBullet，老存档里
-    # bulletType 为空 → 永远无法装填。每实体每会话补试一次。
-    if hasWeapon and not comp.bulletType and entity.id not in _bulletTypeHealTried:
-        _bulletTypeHealTried.add(entity.id)
-        from .SentryArmInteraction import _resolveBulletType
+    # 旧版数据自愈：bind 变体枪（so14 等）曾解析不出 useBullet；旧存档没有
+    # magazineSize（容量判定会漂移 → 动力臂吞子弹）。缺任一项都补一次，
+    # 每实体每会话只试一次。
+    if (
+        hasWeapon
+        and entity.id not in _weaponHealTried
+        and (not comp.bulletType or int(getattr(comp, "magazineSize", 0) or 0) <= 0)
+    ):
+        _weaponHealTried.add(entity.id)
+        from .SentryArmInteraction import _getEpApiInstance
 
-        comp.bulletType = _resolveBulletType(comp.weaponItemName)
+        info = EpCompat.getGunInfoWithBind(_getEpApiInstance(), comp.weaponItemName)
+        if info:
+            if not comp.bulletType:
+                comp.bulletType = info.get("useBullet", "") or ""
+            if int(getattr(comp, "magazineSize", 0) or 0) <= 0:
+                comp.magazineSize = int(info.get("magazine", 0) or 0)
 
     # 前置条件（注：currentMagazine/ammoReserve 是 persistent 字段，由装卸枪路径管理，
     # 这里临时失效不清，恢复后继续用原弹药）
@@ -527,7 +537,11 @@ def _refillMagazine(comp, gunInfo):
     reserve = int(comp.ammoReserve or 0)
     if reserve <= 0:
         return 0
-    magCap = max(1, int(gunInfo.get("magazine", 30))) if gunInfo else 30
+    # 弹匣容量优先读装枪时持久化的 magazineSize（与库存容量判定同源），
+    # 旧存档兜底 gunInfo
+    magCap = int(getattr(comp, "magazineSize", 0) or 0)
+    if magCap <= 0:
+        magCap = max(1, int(gunInfo.get("magazine", 30))) if gunInfo else 30
     mag = int(comp.currentMagazine or 0)
     transfer = min(max(0, magCap - mag), reserve)
     if transfer <= 0:

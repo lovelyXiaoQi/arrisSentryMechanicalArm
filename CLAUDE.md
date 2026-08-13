@@ -77,7 +77,7 @@ EP+ 3.5x 新数据形态的唯一适配点。双端共享**纯逻辑**模块：�
 
 用 v3 公共接口 `ext.registerArmPoint(SENTRY_ARM_BLOCK, "take_deposit", SentryArmRuntimePoint())` 注册（capability `arm_points`，**双端各注册一次**：服务端在 `ModServerSystem._doRegister`，客户端在 `ModClientSystem._doRegisterClient` 只传方块名 + 模式。缺客户端那份，联机远端玩家手持动力臂点不中哨戒臂；缺服务端那份，能打点但搬不动）。让**普通机械臂**能把物品往返哨戒臂。交互点位置为 `blockPos + (0.5, 1.5, 0.5)`，朝向 UP。规则：
 
-- `insert` 接受该枪弹药序列（`EP_BULLET_SEQUENCE[useBullet]`）内**任意等级**子弹；库存同时只存一种等级（`reserveBulletType`），已有存货只收同名弹；容量 = `magazine × 5`。
+- `insert` 接受该枪弹药序列（`EP_BULLET_SEQUENCE[useBullet]`）内**任意等级**子弹；库存同时只存一种等级（`reserveBulletType`），已有存货只收同名弹；容量 = 装枪时持久化的 `magazineSize × 5`。**容量判定必须恒定**：动力臂 collect 的 simulate 预算与 deposit 的真实入库若读到不同容量，差额会滞留在动力臂爪子里（玩家视角=吞子弹）——不要改回用异步 `_gunInfoCache` 算容量。
 - `extract` 只从 `ammoReserve` 取料且按 `reserveBulletType` 实际等级返还（不降级），**绝不动 `currentMagazine`**（已上膛的子弹跟着枪走）。
 - **必须与主包 `RuntimePoint` 基类全接口同形**：主包 `MechanicalArmSystem` 会无守卫直调 `extractDistributable()`（哨戒臂被配成输入点时逐 tick）与 `popContainerItem()`（每次 insert 成功后），缺方法 = AttributeError 掀掉整个服务端 ECS tick。**不要删这两个方法**。
 

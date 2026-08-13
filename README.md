@@ -125,6 +125,7 @@ arrisSentryMechanicalArm/
 | `weaponCustomTips` | str | 枪械自定义提示 | O | - |
 | `weaponExtraId` | str | 枪械配件/皮肤数据 | O | - |
 | `weaponUserData` | str | 枪械物品 userData 的 JSON 快照（取出时原样写回） | O | - |
+| `magazineSize` | int | 装枪时持久化的弹匣容量（库存容量 = ×5；恒定判定防动力臂吞弹） | O | - |
 | `currentMagazine` | int | 弹匣剩余 | O | O |
 | `ammoReserve` | int | 备用弹药储量 | O | O |
 | `bulletType` | str | 接受的弹药基础物品 ID（gun data.useBullet） | O | O |
@@ -185,7 +186,7 @@ arrisSentryMechanicalArm/
 
 普通机械臂识别哨戒臂上方 1.5 格的交互点：
 
-- **insert**: 接受该枪弹药序列内任意等级子弹（库存同时只存一种等级，取空后可换）；上限 = `magazine × 5`
+- **insert**: 接受该枪弹药序列内任意等级子弹（库存同时只存一种等级，取空后可换）；上限 = 装枪时持久化的 `magazineSize × 5`
 - **extract**: 只从 `ammoReserve` 按实际存放等级取料，不动已上膛的 `currentMagazine`
 
 ### 红石信号

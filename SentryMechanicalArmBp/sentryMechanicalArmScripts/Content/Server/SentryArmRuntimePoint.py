@@ -40,10 +40,17 @@ def _getSentryComp(blockPos, dimensionId):
 def _getReserveCap(comp):
     # type: (object) -> int
     """
-    弹药库存容量上限。
-    优先从 SentryArmTargeting._gunInfoCache 读当前枪的 magazine × RESERVE_MULT；
-    缓存未建立时（首次交互）兜底 30 × RESERVE_MULT。
+    弹药库存容量上限 = 弹匣容量 × RESERVE_MULT。
+
+    以装枪时持久化的 comp.magazineSize 为准——容量判定必须在动力臂整个
+    搬运周期内恒定（collect 的 simulate 预算和 deposit 的真实入库读到
+    不同容量时，差额会永久滞留在动力臂爪子里，玩家视角就是"吞子弹"）。
+    旧存档未记录 magazineSize 时走 gunInfo 缓存兜底（同样的漂移风险仍在，
+    但服务端 tick 的武器自愈会在首次 tick 补写 magazineSize，窗口极短）。
     """
+    magSize = int(getattr(comp, "magazineSize", 0) or 0)
+    if magSize > 0:
+        return magSize * RESERVE_MULT
     try:
         from . import SentryArmTargeting
         # 逐一查缓存，匹配 bulletType 的枪信息即可（同枪械同弹药）

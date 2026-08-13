@@ -59,20 +59,6 @@ def _isGun(itemName):
     return EpCompat.isGunWithBind(_getEpApiInstance(), itemName)
 
 
-def _resolveBulletType(itemName):
-    # type: (str) -> str
-    """
-    获取枪械接受的弹药物品 ID（基于基础 useBullet — 配件不改此字段，已验证；
-    bind 变体枪按合并数据兜底，否则 so14 等会拿到空串导致永远无法装填）
-    """
-    if not itemName:
-        return ""
-    info = EpCompat.getGunInfoWithBind(_getEpApiInstance(), itemName)
-    if not info:
-        return ""
-    return info.get("useBullet", "") or ""
-
-
 def _getServerWorld():
     SW = serverApi.ImportModule(_MAIN_PACK + ".Content.Server.ServerWorld")
     return SW.ServerWorld() if SW else None
@@ -145,8 +131,12 @@ def equipGunToSentry(playerId, data):
     comp.weaponCustomTips = carriedItem.get("customTips", "")
     comp.weaponExtraId = carriedItem.get("extraId", "")
 
-    # 弹药状态：bulletType 同步；currentMagazine 读枪械物品 extraId（已装填子弹数）
-    comp.bulletType = _resolveBulletType(itemName)
+    # 弹药状态：bulletType / magazineSize 装枪时同步解析并持久化（bind 变体枪
+    # 走合并数据兜底；magazineSize 决定库存容量，动力臂 simulate/真实入库必须
+    # 读到同一容量）；currentMagazine 读枪械物品 extraId（已装填子弹数）
+    gunInfo = EpCompat.getGunInfoWithBind(_getEpApiInstance(), itemName)
+    comp.bulletType = (gunInfo.get("useBullet", "") or "") if gunInfo else ""
+    comp.magazineSize = int(gunInfo.get("magazine", 0) or 0) if gunInfo else 0
     rawExtra = carriedItem.get("extraId", 0)
     try:
         comp.currentMagazine = int(rawExtra) if rawExtra else 0
@@ -211,6 +201,7 @@ def _clearWeaponState(comp):
     comp.weaponExtraId = ""
     comp.weaponUserData = ""
     comp.bulletType = ""
+    comp.magazineSize = 0
     comp.currentMagazine = 0
     comp.ammoReserve = 0
     comp.reserveBulletType = ""
