@@ -2,15 +2,18 @@
 """
 TargetBoardServer - "哨戒动力臂自定义索敌设置" 物品 (create:target_board) 的服务端逻辑
 
-三条事件 / RPC:
-1. PlayerAttackEntityEvent     左键攻击实体 → 把 victim 的 typeStr 写入 board.userData
-2. ServerItemUseOnEvent        右键哨戒臂方块 → 把 board.userData.targets 应用到 sentry ECS
-3. sentryTargetBoardDelete     客户端 UI 删除按钮回调 → 删除 board 中第 index 项
+四条事件 / RPC:
+1. PlayerAttackEntityEvent       左键攻击实体 → 把 victim 的 typeStr 写入 board.userData
+2. ServerItemUseOnEvent          右键哨戒臂方块 → 把 board.userData.targets 应用到 sentry ECS
+3. sentryTargetBoardDelete       客户端 UI 删除按钮回调 → 删除 board 中第 index 项
+4. sentryTargetBoardAddManual    客户端 UI 输入框回调 → 追加手输匹配规则（* 通配 / ! 取反）
 
 userData 结构由 ItemFactory 管理: userData["ArrisCustomData"]["targets"] = list[dict]
+手输规则条目: {"typeStr": TargetMatcher.CUSTOM_PATTERN_TYPE, "name": 规则文本}
 """
 
 from ...QuModLibs.Server import AllowCall, InjectHttpPlayerId, Listen, serverApi
+from ..Shared import SentryTargetMatcher as TargetMatcher
 from ..Shared.ItemFactory import ItemFactory
 
 TARGET_BOARD = "create:target_board"
@@ -159,8 +162,9 @@ def _onItemUseOnBlock(args):
     targets = _readTargets(itemDict)
     if targets:
         # 编码规则:
-        #   非玩家 → "<typeStr>"          (例: "minecraft:zombie")
-        #   玩家   → "<typeStr>@<name>"   (例: "minecraft:player@Alice")
+        #   非玩家     → "<typeStr>"          (例: "minecraft:zombie")
+        #   玩家       → "<typeStr>@<name>"   (例: "minecraft:player@Alice")
+        #   手输规则   → 规则文本原样          (例: "1234*" / "!ep_jxk:*")
         # 玩家加上 name 是为了能区分具体玩家(同 typeStr 多个实例)。
         encoded = []
         for t in targets:
@@ -172,6 +176,10 @@ def _onItemUseOnBlock(args):
                 if not pname:
                     continue
                 encoded.append("{}@{}".format(ts, pname))
+            elif ts == TargetMatcher.CUSTOM_PATTERN_TYPE:
+                pattern, _err = TargetMatcher.validateManualToken(t.get("name", ""))
+                if pattern:
+                    encoded.append(pattern)
             else:
                 encoded.append(ts)
         comp.customTargets = ",".join(encoded)
@@ -210,3 +218,36 @@ def sentryTargetBoardDelete(playerId, index):
 
     del targets[idx]
     _writeTargets(itemComp, playerId, boardItem, targets)
+
+
+# ==================== 4. UI 输入框手输规则 RPC ====================
+
+
+@AllowCall
+@InjectHttpPlayerId
+def sentryTargetBoardAddManual(playerId, text):
+    # type: (str, str) -> None
+    """
+    客户端 UI 输入框回调：把手输的匹配规则追加进手持 board。
+    服务端权威校验（客户端预检只是省一次 RPC），规则语义见 Shared/SentryTargetMatcher。
+    """
+    itemComp, slot, boardItem = _getCarriedBoard(playerId)
+    if not boardItem:
+        return
+
+    token, err = TargetMatcher.validateManualToken(text)
+    if not token:
+        _tip(playerId, "§c无效的索敌规则: §f{}".format(err))
+        return
+
+    targets = _readTargets(boardItem)
+    if any(
+        t.get("typeStr") == TargetMatcher.CUSTOM_PATTERN_TYPE and t.get("name") == token
+        for t in targets
+    ):
+        _tip(playerId, "§e规则已存在: §f{}".format(token))
+        return
+
+    targets.append({"typeStr": TargetMatcher.CUSTOM_PATTERN_TYPE, "name": token})
+    _writeTargets(itemComp, playerId, boardItem, targets)
+    _tip(playerId, "§a已添加索敌规则: §f{}".format(token))

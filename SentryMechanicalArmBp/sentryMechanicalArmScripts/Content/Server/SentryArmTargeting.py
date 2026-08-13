@@ -11,6 +11,7 @@ import math
 
 from ...QuModLibs.Server import AllowCall, Call, serverApi
 from ..Shared import SentryArmEpCompat as EpCompat
+from ..Shared import SentryTargetMatcher as TargetMatcher
 
 SENTRY_ARM_BLOCK = "create:sentry_mechanical_arm"
 _MAIN_PACK = "arrisCreateScripts"
@@ -785,24 +786,13 @@ def _findNearestHostile(entity, scanRange):
     # 索敌模式判定（一次读取 SentryArmComponent 给后续循环复用）
     sentryComp = entity.getComponent("SentryArmComponent")
     mode = int(getattr(sentryComp, "targetMode", 0) or 0) if sentryComp else 0
-    # 自定义模式的两套匹配集（玩家走 name 集，非玩家走 typeStr 集）
-    customTypeSet = None
-    customPlayerNameSet = None
+    # 自定义模式：customTargets 预编译成 (正向, 取反) 匹配条目，
+    # 支持 * 通配 / ! 取反（语义见 Shared/SentryTargetMatcher）
+    customCompiled = None
     if mode == 1:
         customRaw = getattr(sentryComp, "customTargets", "") or ""
-        customTypeSet = set()
-        customPlayerNameSet = set()
-        # 编码规则: 非玩家 = "<typeStr>"，玩家 = "minecraft:player@<name>"
-        for token in customRaw.split(","):
-            if not token:
-                continue
-            if token.startswith("minecraft:player@"):
-                pname = token[len("minecraft:player@") :]
-                if pname:
-                    customPlayerNameSet.add(pname)
-            else:
-                customTypeSet.add(token)
-        if not customTypeSet and not customPlayerNameSet:
+        customCompiled = TargetMatcher.compileTargets(customRaw)
+        if not customCompiled[0] and not customCompiled[1]:
             # 自定义模式但列表空 → 不索敌（行为同 IDLE）
             return None
 
@@ -815,22 +805,18 @@ def _findNearestHostile(entity, scanRange):
             continue
         # 敌对判定按模式分流
         if mode == 1:
-            # CUSTOM: 玩家按 GetName 精确匹配,非玩家按 typeStr 精确匹配
+            # CUSTOM: 匹配键只用两个接口——GetEngineTypeStr(实体ID) +
+            # GetName(玩家名/命名牌名，所有实体统一取)，
+            # 精确条目 / * 通配 / ! 取反统一走 TargetMatcher
             typeStr = compFactory.CreateEngineType(eid).GetEngineTypeStr()
             if not typeStr:
                 continue
-            if typeStr == "minecraft:player":
-                if not customPlayerNameSet:
-                    continue
-                try:
-                    pname = compFactory.CreateName(eid).GetName() or ""
-                except Exception:
-                    pname = ""
-                if pname not in customPlayerNameSet:
-                    continue
-            else:
-                if typeStr not in customTypeSet:
-                    continue
+            try:
+                entityName = compFactory.CreateName(eid).GetName() or ""
+            except Exception:
+                entityName = ""
+            if not TargetMatcher.matchTarget(customCompiled, typeStr, entityName):
+                continue
         else:
             # DEFAULT: 实体 type_family 与 _HOSTILE_FAMILIES 有交集即敌对。
             # type_family 由实体行为包 JSON 显式声明，对自定义 / 模组实体也可靠

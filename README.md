@@ -35,7 +35,7 @@
 
 | 能力 | 说明 |
 | --- | --- |
-| 自动索敌 | 基于 EntityType 位掩码 (Monster / Hostile / Undead / Zombie / Skeleton / Arthropod) 扫描最近的敌对生物 |
+| 自动索敌 | 默认按实体 type_family 扫描最近敌对生物；登记板自定义模式支持精确条目、`*` 通配、`!` 取反（游戏内 `?` 帮助页有教程） |
 | 枪械装备 | 手持 EP 枪械对准方块按 `K` 键或 HUD 按钮即可装备；空手操作取回；保留枪械 `extraId` / 配件 / `userData`（弹药等级、皮肤）状态；bind 变体枪（so14 / holger26 / m4a1_ziptie）可正常识别 |
 | 弹药系统 | 弹匣 (`currentMagazine`) + 备用库存 (`ammoReserve`)；支持普通动力臂自动补弹 / 回收 |
 | 子弹等级 | 兼容 EP+ 子弹等级体系：接受 `EP_BULLET_SEQUENCE` 内任意等级弹，弹匣逐发记录等级、高级弹优先打出，伤害乘等级倍率（`BULLET_DATA['danger']`）；取出 / 掉落按实际等级返还不降级 |
@@ -188,6 +188,16 @@ arrisSentryMechanicalArm/
 
 - **insert**: 接受该枪弹药序列内任意等级子弹（库存同时只存一种等级，取空后可换）；上限 = 装枪时持久化的 `magazineSize × 5`
 - **extract**: 只从 `ammoReserve` 按实际存放等级取料，不动已上膛的 `currentMagazine`
+
+### 自定义索敌（登记板）
+
+手持"哨戒动力臂自定义索敌设置"登记板：
+
+- 左键实体 → 登记精确目标（玩家按名字、生物按实体 ID）
+- 右键空气 → 打开管理 UI：输入框可手输匹配规则并回车提交
+  （`1234*` 匹配 1234 开头、`!1234` 排除 1234；规则作用于实体 ID 与名字——玩家名/命名牌，取值只用
+  `GetEngineTypeStr` + `GetName` 两个接口；`?` 按钮打开内置教程）
+- 右键哨戒臂 → 应用配置（列表为空则恢复默认敌对索敌）
 
 ### 红石信号
 

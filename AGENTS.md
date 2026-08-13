@@ -50,6 +50,7 @@ Python mod 由 [modMain.py](SentryMechanicalArmBp/sentryMechanicalArmScripts/mod
 - 弹药是 ECS 持久化状态。弹匣补弹代价是 `reloadEmptyTick × 30` tick 的 `COOLDOWN` + 换弹音效。备用弹药 `ammoReserve` 通过运行时交互点由普通机械臂注入。
 - **EP+ 子弹等级**：`bulletType` 只存基础弹名（gun data.useBullet）；库存实际弹种在 `reserveBulletType`（同时只存一种），弹匣逐发等级在 `magazineBulletList`（EP bullet_list 数字串：每位 = 弹药序列下标，降序排列，末尾先打 → 高级弹优先）。补弹统一走 `_refillMagazine`，射击按末位数字还原弹种并把伤害乘 `BULLET_DATA['danger']`。**不要绕过 `_refillMagazine` 直接改 `currentMagazine`**，数字串会和弹匣数失同步。
 - **fireSpeed 双语义**：EP 新版 `< 1` 是秒、`>= 1` 是 tick（对齐 `gunFire._startFireInterval`）。任何读 `gunInfo["fireSpeed"]` 的地方必须过 `EpCompat.fireSpeedToTicks`——直接 `int()` 会把 0.074 截成 0 → 射速失控。
+- **自定义索敌匹配**统一走 `Shared/SentryTargetMatcher`：匹配键只用两个引擎接口——`GetEngineTypeStr`（实体ID）+ `GetName`（玩家名/命名牌名，**所有实体统一取**）。`customTargets` 逗号分隔 token，支持精确条目、`*` 通配、`!` 取反；`minecraft:player@名字` 玩家条目要求 typeStr 必须是玩家（防同名命名牌生物冒充）；纯取反列表 = 排除之外全部命中。登记板手输规则在 board userData 里以 `typeStr == "custom:pattern"` 存储（`TargetMatcher.CUSTOM_PATTERN_TYPE`）。改匹配语义必须同步 UI 帮助蒙层文案（`SentryMechanicalArmRp/ui/sentry_target_manage.json` 的帮助 label）。
 
 ### EP+ 数据兼容层 —— `Content/Shared/SentryArmEpCompat.py`
 
@@ -93,6 +94,7 @@ EP+ 3.5x 新数据形态的唯一适配点。双端共享**纯逻辑**模块：�
 
 - [Client/SentryArmInteraction.py](SentryMechanicalArmBp/sentryMechanicalArmScripts/Content/Client/SentryArmInteraction.py) 每 tick 调 `PickFacing()` 并用 `EpCompat.isGunWithBind`（`EpApiClient.IsGun` + bind 变体枪兜底）判定显示什么 HUD 文本；弹药装填判定 `_canLoadBullet` 必须与服务端 `RuntimePoint.insert` 门禁一致（序列内任意等级 + 库存同名门禁）。`K` 键（分类"哨戒动力臂"）触发 RPC。
 - [SentryArmHudProxy.py](SentryMechanicalArmBp/sentryMechanicalArmScripts/Content/Client/SentryArmHudProxy.py) 是绑定到 `hud.hud_screen` 的 `CustomUIScreenProxy` —— 按钮面板通过 `ui/hud_screen.json` modifications 注入。`getHudProxy()` 是单例访问器，**不要自己构造新实例**。
+- [Client/SentryTargetManageUi.py](SentryMechanicalArmBp/sentryMechanicalArmScripts/Content/Client/SentryTargetManageUi.py) 是登记板管理 UI（`sentry_target_manage.sentry_screen`）。`common.base_screen` 内容路径前缀与主包 `PackageFilterUi` 同源——`$screen_content` 面板的**子控件**直接挂在 `root_screen_panel` 下（路径不含面板自身名）；jsonui 里挪动输入框时要同步 `_EDIT_BOX` 常量。输入框提交走 `BF_EditFinished`（回车/失焦；`SetEditText("")` 清空会再触发一次，空串分支必须保留静默忽略）。帮助蒙层显隐走 `#help_page_visible` **双属性绑定**（`#visible` + `#enabled` 各一份，`binding_condition` 必须 `always`，json 静态 `visible/enabled` 均 false 兜底首帧）——modal `input_panel` 只在显示时参与输入捕获，**隐藏时必须同时 disabled**，否则看不见的模态面板会吃掉主面板输入；不要删掉 `#enabled` 那份绑定或改回 SetVisible 路径调用。
 
 ### 枪械渲染
 
