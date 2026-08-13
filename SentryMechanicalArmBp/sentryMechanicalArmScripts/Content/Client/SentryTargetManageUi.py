@@ -33,7 +33,7 @@ _ROOT_PATH = (
     "/variables_button_mappings_and_controls/safezone_screen_matrix/inner_matrix"
     "/safezone_screen_panel/root_screen_panel"
 )
-_EDIT_BOX = _ROOT_PATH + "/bg/stack_panel/top_panel/edit_panel/edit_box"
+_EDIT_BOX = _ROOT_PATH + "/main_bg/stack_panel/top_panel/edit_panel/edit_box"
 
 
 @ScreenNodeWrapper.autoRegister("sentry_target_manage.sentry_screen")
@@ -136,9 +136,10 @@ class SentryTargetManageUi(ScreenNodeWrapper):
     def _bindHelpVisible(self):
         # type: () -> bool
         """
-        帮助蒙层 可见+可交互 双属性绑定（json 里 #visible / #enabled 各挂一份，
-        binding_condition 必须 always）。modal input_panel 只有显示时才允许参与
-        输入捕获——隐藏时若不同时 disabled，看不见的模态面板仍会吃掉主面板输入。
+        帮助提示（help_bg 面板 + background 暗色蒙层）可见+可交互 双属性绑定
+        （json 里两控件各挂 #visible / #enabled 一对，binding_condition 必须
+        always——用 always_when_visible 隐藏后绑定不再评估，就永远显示不出来）。
+        隐藏时同时 disabled，面板内的返回按钮不会残留可焦点状态。
         """
         return self._helpVisible
 
