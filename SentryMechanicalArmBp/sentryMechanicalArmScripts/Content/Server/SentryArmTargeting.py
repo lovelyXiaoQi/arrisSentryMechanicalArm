@@ -445,7 +445,7 @@ def _tickShooting(entity, comp):
         shootInfo = dict(gunInfo)
         shootInfo["damage"] = gunInfo.get("damage", 0) * damageMult
 
-    shooterPos = _computeMuzzle(entity)
+    shooterPos = _computeMuzzle(entity, targetPos)
     api.Shoot(
         shooterPos=shooterPos,
         targetPos=targetPos,
@@ -747,14 +747,40 @@ def _isInRange(entity, comp, targetPos):
     return dx * dx + dy * dy + dz * dz <= maxDist * maxDist
 
 
-def _computeMuzzle(entity):
-    # type: (object) -> tuple
-    """枪口世界坐标（与 api.Shoot / 客户端 _updateAimAngles 一致：ceiling 时枪口在方块下方）"""
+# 枪口前向偏移（沿瞄准方向），让弹道/枪口特效看起来从枪口射出而不是臂座
+_MUZZLE_FORWARD_OFFSET = 0.8
+# 枪口与目标至少保留的间距（近身目标收缩偏移，防止枪口越过目标导致弹道反向）
+_MUZZLE_MIN_GAP = 0.5
+
+
+def _computeMuzzle(entity, targetPos=None):
+    # type: (object, tuple | None) -> tuple
+    """
+    枪口世界坐标。基准点 = 臂座枢轴（与客户端 _updateAimAngles 的角度基准一致：
+    正置在方块上方 1 格、ceiling 在方块下方）。
+
+    传入 targetPos 时沿瞄准方向前移 _MUZZLE_FORWARD_OFFSET——开火时机已由
+    _isAimAligned 保证与视觉朝向偏差 ≤5°，故"朝目标方向"即"枪口朝向"；
+    近身目标按 _MUZZLE_MIN_GAP 收缩偏移。瞄准角度计算仍用枢轴，不要混用。
+    """
     pos = entity.blockPos
     facingComp = entity.getComponent("SixFacingComponent")
     ceiling = facingComp and facingComp.facing == 0
     armY = pos[1] + 0.5 + (-1.0 if ceiling else 1.0)
-    return (pos[0] + 0.5, armY, pos[2] + 0.5)
+    muzzle = (pos[0] + 0.5, armY, pos[2] + 0.5)
+    if not targetPos:
+        return muzzle
+    dx = targetPos[0] - muzzle[0]
+    dy = targetPos[1] - muzzle[1]
+    dz = targetPos[2] - muzzle[2]
+    dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+    if dist < 0.01:
+        return muzzle
+    forward = min(_MUZZLE_FORWARD_OFFSET, max(0.0, dist - _MUZZLE_MIN_GAP))
+    if forward <= 0.0:
+        return muzzle
+    scale = forward / dist
+    return (muzzle[0] + dx * scale, muzzle[1] + dy * scale, muzzle[2] + dz * scale)
 
 
 def _hasLineOfSight(entity, targetPos):
@@ -765,7 +791,7 @@ def _hasLineOfSight(entity, targetPos):
     跳过自身哨戒臂方块 + _RAY_PASSTHROUGH_BLOCKS 中的植物/液体，首个"实心"阻挡判距离。
     障碍物在目标之后 → 视为通路。
     """
-    muzzle = _computeMuzzle(entity)
+    muzzle = _computeMuzzle(entity, targetPos)
     dx = targetPos[0] - muzzle[0]
     dy = targetPos[1] - muzzle[1]
     dz = targetPos[2] - muzzle[2]
