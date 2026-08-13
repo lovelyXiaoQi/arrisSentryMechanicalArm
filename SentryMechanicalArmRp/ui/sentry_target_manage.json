@@ -26,24 +26,10 @@
         "controls": [
             {
                 "background@common.screen_background": {
-                    "bindings": [
-                        {
-                            "binding_condition": "always",
-                            "binding_name": "#help_page_visible",
-                            "binding_name_override": "#visible"
-                        },
-                        {
-                            "binding_condition": "always",
-                            "binding_name": "#help_page_visible",
-                            "binding_name_override": "#enabled"
-                        }
-                    ],
-                    "enabled": false,
-                    "visible": false,
-                    "layer": 1,
+                    "layer": -1,
                     "size": [
-                        "100%+0px",
-                        "100%+0px"
+                        "200%+0px",
+                        "200%+0px"
                     ]
                 }
             },
@@ -628,18 +614,6 @@
                     "layer": 30,
                     "visible": false,
                     "enabled": false,
-                    "bindings": [
-                        {
-                            "binding_condition": "always",
-                            "binding_name": "#help_page_visible",
-                            "binding_name_override": "#visible"
-                        },
-                        {
-                            "binding_condition": "always",
-                            "binding_name": "#help_page_visible",
-                            "binding_name_override": "#enabled"
-                        }
-                    ],
                     "clip_direction": "left",
                     "clip_ratio": 0.0,
                     "nineslice_size": [
@@ -649,6 +623,18 @@
                         1.0
                     ],
                     "texture": "textures/ui/ore_ui/oreUi_base_frame_dark",
+                    "bindings": [
+                        {
+                            "binding_name_override": "#visible",
+                            "binding_condition": "always",
+                            "binding_name": "#help_page_visible"
+                        },
+                        {
+                            "binding_name_override": "#enabled",
+                            "binding_condition": "always",
+                            "binding_name": "#help_page_visible"
+                        }
+                    ],
                     "controls": [
                         {
                             "stack_panel": {

@@ -131,6 +131,8 @@ def buildGunInfo(itemName, mergedData):
         "reloadSound": d.get("reloadSound", []),
         "hitPartic": d.get("hitPartic", ""),
         "fireParts": d.get("fireParts", ""),
+        "percentArmorPenetration": d.get("PercentArmorPenetration", 0),
+        "flatArmorPenetration": d.get("FlatArmorPenetration", 0),
     }
 
 
@@ -224,6 +226,49 @@ def bulletDamageMultiplier(epBulletMod, bulletName):
         return float(bulletData.get("danger", 1.0))
     except (TypeError, ValueError):
         return 1.0
+
+
+def armorDamageFactor(epBulletMod, entityArmorMod, bulletName, gunInfo, identifier):
+    # type: (object, object, str, dict, str) -> float
+    """
+    对甲伤害衰减系数（子弹等级差异的主战场——平射 danger 倍率各等级几乎相同）。
+
+    对齐 gunFire 玩家远程命中的甲伤公式:
+        有效护甲 = 枪械护甲(ZOMBIE_ARMOR[实体][1])
+                   × (1 − 枪 PercentArmorPenetration)
+                   × (1 − 子弹 armor_penetration)
+                   − 枪 FlatArmorPenetration
+        系数 = 1 − 有效护甲 / 200
+
+    未收录护甲的实体返回 1.0。ARMOR_LEVEL 部位甲的逐部位耐久与
+    HAS_ARMOR_ENTITY 的破甲视觉状态是 EP 内部（客户端 molang / 服务端
+    实例缓存）状态，此处不模拟——对这类实体按整甲值折算。
+    """
+    if not entityArmorMod or not identifier:
+        return 1.0
+    entry = getattr(entityArmorMod, "ZOMBIE_ARMOR", {}).get(identifier)
+    if not entry or len(entry) < 2 or not entry[1]:
+        return 1.0
+    try:
+        effectiveArmor = float(entry[1])
+    except (TypeError, ValueError):
+        return 1.0
+
+    bulletPen = 0.0
+    bulletData = getattr(epBulletMod, "BULLET_DATA", {}).get(bulletName) if epBulletMod else None
+    if isinstance(bulletData, dict):
+        try:
+            bulletPen = max(0.0, min(float(bulletData.get("armor_penetration", 0.0)), 1.0))
+        except (TypeError, ValueError):
+            bulletPen = 0.0
+    try:
+        pctPen = float(gunInfo.get("percentArmorPenetration", 0) or 0) if gunInfo else 0.0
+        flatPen = float(gunInfo.get("flatArmorPenetration", 0) or 0) if gunInfo else 0.0
+    except (TypeError, ValueError):
+        pctPen, flatPen = 0.0, 0.0
+
+    effectiveArmor = max(effectiveArmor * (1.0 - pctPen) * (1.0 - bulletPen) - flatPen, 0.0)
+    return max(0.0, 1.0 - effectiveArmor / 200.0)
 
 
 def bulletLevel(epBulletMod, bulletName):

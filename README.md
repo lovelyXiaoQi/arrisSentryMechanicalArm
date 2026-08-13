@@ -169,7 +169,8 @@ arrisSentryMechanicalArm/
 | `GetEplisItemData` | `EpJxkScriptClientSystem` | 读取配件加成后的完整枪械属性（bind 变体枪会 KeyError，由下行兜底） |
 | `epApiClient.GetGunData`（经 `Shared/SentryArmEpCompat` bind 合并） | `EpJxkScript.Api.EpApiClient` | bind 变体枪的有效数据还原 / 无配件基础属性兜底 |
 | `epBullet.EP_BULLET_SEQUENCE` / `BULLET_DATA` | `EpJxkScript.modCommon.epBullet` | 子弹等级序列与等级数据（伤害倍率；按调用时读取，兼容附属包运行时扩展） |
-| `epApiServer.Shoot` | `EpJxkScript.Api.EpApiServer` | 服务端权威发射（伤害已预乘子弹等级倍率） |
+| `epApiServer.Shoot` | `EpJxkScript.Api.EpApiServer` | 服务端权威发射（伤害已预乘 子弹等级倍率 × 对甲衰减系数） |
+| `entityArmor.ZOMBIE_ARMOR` | `EpJxkScript.modCommon.entityArmor` | 实体枪械护甲表——对锁定目标按 EP 甲伤公式折算，等级弹穿甲在此拉开差距 |
 
 ---
 

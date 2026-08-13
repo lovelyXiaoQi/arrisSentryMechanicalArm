@@ -246,5 +246,7 @@ def sentryArmFetchGunInfo(entityId, itemName, customTips, extraId):
         "fireFlash": d.get("fire_flash", ""),
         "hitPartic": d.get("hitPartic", ""),
         "fireParts": d.get("fireParts", ""),
+        "percentArmorPenetration": d.get("PercentArmorPenetration", 0),
+        "flatArmorPenetration": d.get("FlatArmorPenetration", 0),
     }
     Call("sentryArmReportGunInfo", entityId, gunInfo)

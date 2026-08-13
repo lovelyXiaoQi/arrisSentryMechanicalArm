@@ -163,6 +163,8 @@ _epApi = None
 _epApiChecked = False
 _epBullet = None
 _epBulletChecked = False
+_epEntityArmor = None
+_epEntityArmorChecked = False
 # 旧存档武器数据（bulletType / magazineSize）自愈只补试一次的实体集合
 _weaponHealTried = set()
 
@@ -195,6 +197,16 @@ def _getEpBullet():
         _epBullet = serverApi.ImportModule(_EP_PACK + ".modCommon.epBullet")
         _epBulletChecked = True
     return _epBullet
+
+
+def _getEpEntityArmor():
+    # type: () -> object | None
+    """EP 实体护甲数据模块（ZOMBIE_ARMOR 枪械护甲表，纯数据）"""
+    global _epEntityArmor, _epEntityArmorChecked
+    if not _epEntityArmorChecked:
+        _epEntityArmor = serverApi.ImportModule(_EP_PACK + ".modCommon.entityArmor")
+        _epEntityArmorChecked = True
+    return _epEntityArmor
 
 
 def _onServerTick(args=None):
@@ -405,14 +417,24 @@ def _tickShooting(entity, comp):
         return
 
     # 当前发弹种 = 弹匣逐发等级记录的末位（对齐 EP gunFire.GetEpBulletData：
-    # 降序数字串从末尾消耗，高级弹优先打出），伤害乘该等级倍率
-    # （对齐 gunFire: danger *= bulletData['danger']）
+    # 降序数字串从末尾消耗，高级弹优先打出）。
+    # 伤害 = 基础伤害 × 等级平射倍率(danger) × 对甲衰减系数——
+    # 等级差异主要体现在后者（EP 各等级 danger 几乎相同，armor_penetration 才拉开差距）
     mag = int(comp.currentMagazine or 0)
     magList = EpCompat.parseMagList(getattr(comp, "magazineBulletList", "") or "", mag)
     epBulletMod = _getEpBullet()
     shotIndex = magList[mag - 1] if mag > 0 else 0
     shotBullet = EpCompat.bulletAtIndex(epBulletMod, comp.bulletType, shotIndex)
     damageMult = EpCompat.bulletDamageMultiplier(epBulletMod, shotBullet)
+    # 对锁定目标按 EP 枪械护甲 + 枪/子弹穿甲预折算（Shoot 内部不区分目标；
+    # 霰弹误中他人时沿用锁定目标的甲伤系数，属可接受近似）
+    damageMult *= EpCompat.armorDamageFactor(
+        epBulletMod,
+        _getEpEntityArmor(),
+        shotBullet,
+        gunInfo,
+        compFactory.CreateEngineType(targetId).GetEngineTypeStr(),
+    )
     shootInfo = gunInfo
     if damageMult != 1.0:
         shootInfo = dict(gunInfo)
