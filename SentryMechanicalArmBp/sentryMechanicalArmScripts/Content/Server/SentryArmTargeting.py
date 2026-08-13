@@ -12,6 +12,7 @@ import math
 from ...QuModLibs.Server import AllowCall, Call, serverApi
 from ..Shared import SentryArmEpCompat as EpCompat
 from ..Shared import SentryTargetMatcher as TargetMatcher
+from .SentryArmPlacement import consumePendingOwner
 
 SENTRY_ARM_BLOCK = "create:sentry_mechanical_arm"
 _MAIN_PACK = "arrisCreateScripts"
@@ -216,6 +217,13 @@ def _tickSentryArm(entity):
     rpm = netComp.theoreticalSpeed if netComp else 0.0
     hasWeapon = bool(comp.weaponItemName)
 
+    # 放置时暂存的主人信息在实体首个 tick 落盘（放置事件那一刻 ECS 实体尚未创建）
+    if not getattr(comp, "ownerId", "") and not getattr(comp, "ownerName", ""):
+        owner = consumePendingOwner(entity.blockPos, entity.dimensionId)
+        if owner:
+            comp.ownerId = owner[0]
+            comp.ownerName = owner[1]
+
     # 旧版数据自愈：bind 变体枪（so14 等）曾解析不出 useBullet；旧存档没有
     # magazineSize（容量判定会漂移 → 动力臂吞子弹）。缺任一项都补一次，
     # 每实体每会话只试一次。
@@ -378,9 +386,10 @@ def _tickShooting(entity, comp):
         return
 
     # 射击前重验:目标被某 mod 转成"尸体"(SPEED=0 / markVariant=999 /
-    # 加上 epitem/inanimate family) → 停止鞭尸,放弃目标重回 SCANNING
+    # 加上 epitem/inanimate family)、或已豁免（锁定期间切创造 / 主人）
+    # → 停止射击,放弃目标重回 SCANNING
     targetId = _trackedTargets.get(entity.id)
-    if targetId and not _isStillAttackable(targetId):
+    if targetId and (not _isStillAttackable(targetId) or _isExemptTarget(comp, targetId)):
         comp.state = SCANNING
         comp.hasTarget = False
         _trackedTargets.pop(entity.id, None)
@@ -796,10 +805,16 @@ def _findNearestHostile(entity, scanRange):
             # 自定义模式但列表空 → 不索敌（行为同 IDLE）
             return None
 
+    # 主人豁免键（一次读取给循环复用）
+    ownerId = (getattr(sentryComp, "ownerId", "") or "") if sentryComp else ""
+    ownerName = (getattr(sentryComp, "ownerName", "") or "") if sentryComp else ""
+
     armCenter = (pos[0] + 0.5, pos[1] + 0.5, pos[2] + 0.5)
     candidates = []  # [(distSq, eid)]
 
     for eid in entityIds:
+        if ownerId and str(eid) == ownerId:
+            continue  # 主人豁免（运行时 id，同会话内可靠）
         attrComp = compFactory.CreateAttr(eid)
         if not attrComp:
             continue
@@ -815,6 +830,13 @@ def _findNearestHostile(entity, scanRange):
                 entityName = compFactory.CreateName(eid).GetName() or ""
             except Exception:
                 entityName = ""
+            if typeStr == "minecraft:player":
+                # 主人（跨会话按名字）与创造模式玩家无条件豁免，
+                # 优先级高于自定义规则（包括纯取反的"打一切"列表）
+                if ownerName and entityName == ownerName:
+                    continue
+                if _isCreativePlayer(eid):
+                    continue
             if not TargetMatcher.matchTarget(customCompiled, typeStr, entityName):
                 continue
         else:
@@ -871,6 +893,49 @@ def _isEntityAlive(entityId):
         return False
     health = attrComp.GetAttrValue(_AttrType.HEALTH)
     return health is not None and health > 0
+
+
+def _isCreativePlayer(playerId):
+    # type: (str) -> bool
+    """创造模式玩家判定（GetPlayerGameType: 1 = 创造），只对玩家 id 调用"""
+    return gameComp.GetPlayerGameType(playerId) == 1
+
+
+def _isExemptTarget(comp, entityId):
+    # type: (object, str) -> bool
+    """
+    主人 / 创造模式玩家 豁免复检（扫描阶段已过滤，这里覆盖锁定期间
+    才出现的变化：目标切创造、旧存档目标恰为主人等）。
+    """
+    ownerId = getattr(comp, "ownerId", "") or ""
+    if ownerId and str(entityId) == ownerId:
+        return True
+    typeStr = compFactory.CreateEngineType(entityId).GetEngineTypeStr()
+    if typeStr != "minecraft:player":
+        return False
+    ownerName = getattr(comp, "ownerName", "") or ""
+    if ownerName:
+        try:
+            name = compFactory.CreateName(entityId).GetName() or ""
+        except Exception:
+            name = ""
+        if name == ownerName:
+            return True
+    return _isCreativePlayer(entityId)
+
+
+def resetTargeting(entityId, comp):
+    # type: (str, object) -> None
+    """
+    索敌配置被外部改动（登记板应用/清空）后立刻重置状态机：
+    丢弃当前目标、射击冷却与扫描间隔，下一 tick 按新配置重新扫描。
+    瞄准角度跟踪（_serverAimBase/Head）保留——臂从当前朝向自然转向新目标。
+    """
+    _trackedTargets.pop(entityId, None)
+    _fireCooldowns.pop(entityId, None)
+    _scanCooldowns.pop(entityId, None)
+    comp.state = IDLE
+    comp.hasTarget = False
 
 
 def _isStillAttackable(entityId):

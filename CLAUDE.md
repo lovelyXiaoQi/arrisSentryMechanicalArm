@@ -50,6 +50,7 @@ Python mod 由 [modMain.py](SentryMechanicalArmBp/sentryMechanicalArmScripts/mod
 - 弹药是 ECS 持久化状态。弹匣补弹代价是 `reloadEmptyTick × 30` tick 的 `COOLDOWN` + 换弹音效。备用弹药 `ammoReserve` 通过运行时交互点由普通机械臂注入。
 - **EP+ 子弹等级**：`bulletType` 只存基础弹名（gun data.useBullet）；库存实际弹种在 `reserveBulletType`（同时只存一种），弹匣逐发等级在 `magazineBulletList`（EP bullet_list 数字串：每位 = 弹药序列下标，降序排列，末尾先打 → 高级弹优先）。补弹统一走 `_refillMagazine`，射击按末位数字还原弹种并把伤害乘 `BULLET_DATA['danger']`。**不要绕过 `_refillMagazine` 直接改 `currentMagazine`**，数字串会和弹匣数失同步。
 - **fireSpeed 双语义**：EP 新版 `< 1` 是秒、`>= 1` 是 tick（对齐 `gunFire._startFireInterval`）。任何读 `gunInfo["fireSpeed"]` 的地方必须过 `EpCompat.fireSpeedToTicks`——直接 `int()` 会把 0.074 截成 0 → 射速失控。
+- **主人与创造豁免**：放置时 `SentryArmPlacement.onPlace` 暂存放置者（该事件时刻 ECS 实体尚未创建），`_tickSentryArm` 首帧经 `consumePendingOwner` 写入 `ownerId`（运行时 id，仅当前会话）/ `ownerName`（跨会话）。索敌**无条件**绕过主人与创造模式玩家，优先级高于自定义规则（含纯取反"打一切"列表）；`_tickShooting` 射击前经 `_isExemptTarget` 复检，覆盖锁定期间目标切创造的情况。登记板应用/清空配置后必须调 `SentryArmTargeting.resetTargeting`（丢目标/射击冷却/扫描间隔，保留瞄准角度跟踪）——**不要只写 `customTargets` 而不重置状态机**，否则旧目标会被继续锁定。
 - **自定义索敌匹配**统一走 `Shared/SentryTargetMatcher`：匹配键只用两个引擎接口——`GetEngineTypeStr`（实体ID）+ `GetName`（玩家名/命名牌名，**所有实体统一取**）。`customTargets` 逗号分隔 token，支持精确条目、`*` 通配、`!` 取反；`minecraft:player@名字` 玩家条目要求 typeStr 必须是玩家（防同名命名牌生物冒充）；纯取反列表 = 排除之外全部命中。登记板手输规则在 board userData 里以 `typeStr == "custom:pattern"` 存储（`TargetMatcher.CUSTOM_PATTERN_TYPE`）。改匹配语义必须同步 UI 帮助蒙层文案（`SentryMechanicalArmRp/ui/sentry_target_manage.json` 的帮助 label）。
 
 ### EP+ 数据兼容层 —— `Content/Shared/SentryArmEpCompat.py`

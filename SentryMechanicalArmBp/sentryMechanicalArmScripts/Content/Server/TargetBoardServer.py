@@ -192,6 +192,11 @@ def _onItemUseOnBlock(args):
         if playerId:
             _tip(playerId, "§e哨戒动力臂已恢复默认敌对索敌")
 
+    # 新配置立即生效：丢弃当前索敌目标与冷却，下一 tick 按新配置重新扫描
+    from .SentryArmTargeting import resetTargeting
+
+    resetTargeting(entity.id, comp)
+
     # 阻止默认放置（登记板不应作为方块放进世界）
     args["ret"] = True
 

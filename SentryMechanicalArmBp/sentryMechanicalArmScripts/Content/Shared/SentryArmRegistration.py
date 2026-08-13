@@ -83,6 +83,13 @@ def registerSentryArmEcs(arris):
             #   (每位 = 弹药序列下标，降序排列，开火从末尾消耗)
             magazineBulletList = arris.Field(default="", persistent=True, synced=True)
 
+            # ---- 主人（放置者）----
+            # 放置方块时由 SentryArmPlacement 暂存、Targeting 首个 tick 写入。
+            # ownerId 是运行时实体 id（仅当前会话可靠），ownerName 跨会话稳定；
+            # 索敌无条件绕过主人与创造模式玩家（优先级高于自定义规则）
+            ownerId = arris.Field(default="", persistent=True, synced=True)
+            ownerName = arris.Field(default="", persistent=True, synced=True)
+
             # ---- 自定义索敌 ----
             # 0 = DEFAULT (按 _HOSTILE_FAMILIES 索敌)
             # 1 = CUSTOM  (按 customTargets 中的 typeStr 列表精确索敌)
