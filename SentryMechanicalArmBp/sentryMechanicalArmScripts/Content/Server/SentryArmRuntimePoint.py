@@ -169,3 +169,38 @@ class SentryArmRuntimePoint(object):
     def isDepositOnly(self):
         # type: () -> bool
         return False
+
+
+# ==================== 漏斗 / 溜槽容器 ====================
+
+
+class SentryArmFunnelContainer(object):
+    """
+    机械动力漏斗（安山/黄铜）与溜槽的容器处理器。
+
+    经 v3 公共接口 ext.registerFunnelContainer(块名, handler, "ecs") 注册
+    （capability "funnel_containers"，服务端专属）；协议对齐主包
+    docs/EXTENSION-API.md §15.7。存取语义与动力臂交互点完全一致——
+    同一份弹药库存：接受本枪弹药序列任意等级、库存单一等级、绝不动已上膛弹匣。
+
+    注意：ECS 存储的方块必须让 isContainer 返回 True，否则漏斗完全无视本方块；
+    transactionMode="ecs"（弹药在 SentryArmComponent persistent 字段里）。
+    """
+
+    def __init__(self):
+        self._point = SentryArmRuntimePoint()
+
+    def isContainer(self, pos, dimId, itemComp):
+        # type: (tuple, int, object) -> bool
+        return True
+
+    def insertItem(self, pos, dimId, itemDict, itemComp, simulate=False, fromDirection=None):
+        # type: (tuple, int, dict, object, bool, int | None) -> int
+        """漏斗/溜槽向哨戒臂送弹。返回实际插入数。"""
+        return self._point.insert(pos, dimId, itemDict, simulate=simulate)
+
+    def extractItem(self, pos, dimId, itemComp, amount=1, simulate=False):
+        # type: (tuple, int, object, int, bool) -> dict
+        """漏斗/溜槽从哨戒臂取弹（只取 ammoReserve 备弹）。{} = 无可取。"""
+        item = self._point.extract(pos, dimId, amount, simulate=simulate)
+        return item or {}

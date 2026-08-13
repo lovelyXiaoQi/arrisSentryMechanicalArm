@@ -60,6 +60,7 @@ EP+ 3.5x 新数据形态的唯一适配点。双端共享**纯逻辑**模块：�
 - **子弹等级**：`EP_BULLET_SEQUENCE`（基础弹 → 高→低等级变体列表）/ `BULLET_DATA`（`danger` 伤害倍率、穿甲数据）；弹匣逐发记录的数字串编解码（`parseMagList` / `magListToStr` / `mergeMagList`）。
 - **bind 变体枪**（so14 / holger26 / m4a1_ziptie 等）：自身 JSON 无顶层 `type`/`useBullet`，EP 原生 `IsGun`/`GetGunInfo` 判失败、`GetEplisItemData` 直接 KeyError —— 一律走 `isGunWithBind` / `getGunInfoWithBind` / `resolveGunData`（按 EP 合并语义：bind 本体为底、自身字段覆盖）。
 - 枪械物品 `userData`（bullet_list / bullet_priority / ep_skin）装备时经 `dumpUserData` 快照进 `weaponUserData` 字段，取出/掉落时原样写回。**不要丢 userData**——会重置玩家枪的皮肤与弹药等级。
+- **换弹音效候选**：EP 3.5x 新枪（hdr/aek973/basp_tf/m4a1_twos 等）`reloadSound` 字段为空，音效改由动画关键帧驱动的**分段定义**（多代命名，内部代号可与短名无关，bind 枪挂本体前缀下）。`reloadSoundCandidates` 生成候选名单（字段值 → 补录表 `_RELOAD_SOUND_OVERRIDES` → 代际模式 × 自身/bind 短名），客户端 `sentryArmPlayReloadSound` 逐个 `PlayCustomMusic` 试播命中即停（对不存在的名字返回空 id 无副作用）。**EP 出新枪后哨戒臂换弹无声 → 往补录表加一行**。
 - epBullet / EpApiClient 引用**按调用时读取**（不 snapshot 字典内容），枪械附属包运行时扩展序列也能生效。服务端 epBullet 缓存 getter 在 `SentryArmTargeting._getEpBullet`，客户端在 `Client/SentryArmInteraction._getEpBullet`。
 
 ### 客户端渲染 —— `SentryArmRenderSystem.py` 的 tick / 渲染帧分离
@@ -82,6 +83,7 @@ EP+ 3.5x 新数据形态的唯一适配点。双端共享**纯逻辑**模块：�
 - `insert` 接受该枪弹药序列（`EP_BULLET_SEQUENCE[useBullet]`）内**任意等级**子弹；库存同时只存一种等级（`reserveBulletType`），已有存货只收同名弹；容量 = 装枪时持久化的 `magazineSize × 5`。**容量判定必须恒定**：动力臂 collect 的 simulate 预算与 deposit 的真实入库若读到不同容量，差额会滞留在动力臂爪子里（玩家视角=吞子弹）——不要改回用异步 `_gunInfoCache` 算容量。
 - `extract` 只从 `ammoReserve` 取料且按 `reserveBulletType` 实际等级返还（不降级），**绝不动 `currentMagazine`**（已上膛的子弹跟着枪走）。
 - **必须与主包 `RuntimePoint` 基类全接口同形**：主包 `MechanicalArmSystem` 会无守卫直调 `extractDistributable()`（哨戒臂被配成输入点时逐 tick）与 `popContainerItem()`（每次 insert 成功后），缺方法 = AttributeError 掀掉整个服务端 ECS tick。**不要删这两个方法**。
+- **漏斗类装填与交互点同源**：机械动力安山/黄铜漏斗与溜槽走 v3 公共接口 `ext.registerFunnelContainer(块名, SentryArmFunnelContainer(), "ecs")`（服务端专属，capability `funnel_containers`，§15.7；ECS 存储必须 `isContainer` 返 True 否则漏斗无视本方块）；原版漏斗走 [SentryArmHopperIntake.py](SentryMechanicalArmBp/sentryMechanicalArmScripts/Content/Server/SentryArmHopperIntake.py)——引擎不把自定义方块当容器，哨戒臂按原版 0.4s 节流主动抽取"出口指向自己"的相邻漏斗，在 `_tickSentryArm` **武器前置检查之前**调用（红石锁定/停转也能补弹）。三条路复用 `RuntimePoint.insert/extract` 同一套等级与容量门禁，**改门禁只改 RuntimePoint 一处**。
 
 ### 放置规则 —— `SentryArmPlacement.py`
 

@@ -152,19 +152,24 @@ NativeScreenManager.instance().RegisterScreenProxy(
 
 
 @AllowCall
-def sentryArmPlayReloadSound(soundName, x, y, z, dimensionId):
-    # type: (str, float, float, float, int) -> None
+def sentryArmPlayReloadSound(soundNames, x, y, z, dimensionId):
+    # type: (list | str, float, float, float, int) -> None
     """
-    服务端广播装填音效 → 本地客户端用 PlayCustomMusic 在世界坐标播放。
-    EP 的 reloadSound 是 CustomAudio 注册的自定义事件,服务端 /playsound 找不到。
+    服务端广播装填音效候选名单 → 本地客户端用 PlayCustomMusic 逐个试播，
+    命中即停。EP 3.5x 新枪的换弹音是多代分段命名（见
+    EpCompat.reloadSoundCandidates），PlayCustomMusic 对不存在的名字
+    返回空 id 且无副作用，正好用来逐候选探测。
     """
-    if not soundName:
+    if not soundNames:
         return
+    if not isinstance(soundNames, list):
+        soundNames = [soundNames]  # 兼容旧协议的单名字符串
     if dimensionId != compFactory.CreateGame(levelId).GetCurrentDimension():
         return  # 不在同一维度,忽略
-    compFactory.CreateCustomAudio(levelId).PlayCustomMusic(
-        soundName, (x, y, z), 1.0, 1.0, False, None
-    )
+    audioComp = compFactory.CreateCustomAudio(levelId)
+    for soundName in soundNames:
+        if soundName and audioComp.PlayCustomMusic(soundName, (x, y, z), 1.0, 1.0, False, None):
+            return
 
 
 @AllowCall
@@ -197,6 +202,7 @@ def sentryArmFetchGunInfo(entityId, itemName, customTips, extraId):
     epApiMod = clientApi.ImportModule(_EP_PACK + ".Api.EpApiClient")
     epApiInstance = getattr(epApiMod, "epApiClient", None) if epApiMod else None
 
+    bindName = ""
     if allData and "data" in allData:
         d = allData["data"]
     else:
@@ -207,6 +213,7 @@ def sentryArmFetchGunInfo(entityId, itemName, customTips, extraId):
             merged = EpCompat.resolveGunData(epApiInstance.GetGunData, itemName)
             if merged:
                 d = merged.get("data") or None
+                bindName = merged.get("bind", "") or ""
     if not d:
         return
 
@@ -248,5 +255,7 @@ def sentryArmFetchGunInfo(entityId, itemName, customTips, extraId):
         "fireParts": d.get("fireParts", ""),
         "percentArmorPenetration": d.get("PercentArmorPenetration", 0),
         "flatArmorPenetration": d.get("FlatArmorPenetration", 0),
+        # bind 变体枪的本体名（音效档案挂在本体前缀下，换弹音候选生成用）
+        "bindName": bindName,
     }
     Call("sentryArmReportGunInfo", entityId, gunInfo)

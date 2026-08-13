@@ -12,6 +12,7 @@ import math
 from ...QuModLibs.Server import AllowCall, Call, serverApi
 from ..Shared import SentryArmEpCompat as EpCompat
 from ..Shared import SentryTargetMatcher as TargetMatcher
+from .SentryArmHopperIntake import tickHopperIntake
 from .SentryArmPlacement import consumePendingOwner
 
 SENTRY_ARM_BLOCK = "create:sentry_mechanical_arm"
@@ -235,6 +236,10 @@ def _tickSentryArm(entity):
         if owner:
             comp.ownerId = owner[0]
             comp.ownerName = owner[1]
+
+    # 原版漏斗供弹（内部按 0.4s 节流；放在武器前置检查之前——
+    # 红石锁定 / 停转时也应能补弹，与动力臂交互点行为一致）
+    tickHopperIntake(entity, comp)
 
     # 旧版数据自愈：bind 变体枪（so14 等）曾解析不出 useBullet；旧存档没有
     # magazineSize（容量判定会漂移 → 动力臂吞子弹）。缺任一项都补一次，
@@ -651,23 +656,22 @@ def _isAimAligned(entity, targetPos):
 def _playReloadSound(entity, gunInfo):
     # type: (object, dict) -> None
     """
-    换弹音效：播放 reloadSound[1]（空弹换弹），fallback reloadSound[0]。
+    换弹音效：老枪播 reloadSound 字段值；EP 3.5x 新枪该字段为空（音效改由
+    动画关键帧驱动的分段定义），走 EpCompat.reloadSoundCandidates 生成候选名单，
+    客户端逐个试播、命中即停（PlayCustomMusic 对不存在的名字无副作用）。
 
-    EP 的 reloadSound 是 CustomAudio 注册的自定义事件，服务端 /playsound 找不到；
-    所以走 QuMod 的 server→client Call 广播 → 客户端 PlayCustomMusic 播放。
+    这些名字是 sound_definitions 注册名，服务端 /playsound 对部分自定义名
+    找不到，所以走 QuMod 的 server→client Call 广播 → 客户端播放。
     """
     if not gunInfo:
         return
-    sounds = gunInfo.get("reloadSound", [])
-    if not sounds:
-        return
-    soundName = sounds[1] if len(sounds) > 1 and sounds[1] else (sounds[0] if sounds[0] else "")
-    if not soundName:
+    candidates = EpCompat.reloadSoundCandidates(gunInfo)
+    if not candidates:
         return
     pos = entity.blockPos
     dimensionId = entity.dimensionId
     cx, cy, cz = pos[0] + 0.5, pos[1] + 0.5, pos[2] + 0.5
-    Call("*", "sentryArmPlayReloadSound", soundName, cx, cy, cz, dimensionId)
+    Call("*", "sentryArmPlayReloadSound", candidates, cx, cy, cz, dimensionId)
 
 
 _gunInfoRequestTimes = {}  # entityId -> last broadcast timestamp（避免每 tick 狂发请求）

@@ -133,6 +133,8 @@ def buildGunInfo(itemName, mergedData):
         "fireParts": d.get("fireParts", ""),
         "percentArmorPenetration": d.get("PercentArmorPenetration", 0),
         "flatArmorPenetration": d.get("FlatArmorPenetration", 0),
+        # bind 变体枪的本体名（音效档案挂在本体前缀下，换弹音候选生成用）
+        "bindName": mergedData.get("bind", "") or "",
     }
 
 
@@ -280,6 +282,70 @@ def bulletLevel(epBulletMod, bulletName):
     if not isinstance(bulletData, dict):
         return None
     return bulletData.get("level")
+
+
+# ==================== 换弹音效候选 ====================
+
+# 分段命名无规律可循的枪：直接补录代表音（换弹最具辨识度的一声）。
+# EP 新枪音效档案的内部代号可能与物品短名完全无关（holger→dm56、basp_tf→basp、
+# bind 枪挂在本体前缀下）——通用模式猜不中的在此补录；
+# EP 出新枪后若哨戒臂换弹无声，往这张表加一行即可（key = 物品短名）。
+_RELOAD_SOUND_OVERRIDES = {
+    "basp_tf": "basp.basp_reload_empty_magout",
+    "holger": "holger.dm56_reload_empty_magout",
+    "holger26": "holger.holger26_reload_empty_charge",
+    "m4a1_twos": "m4a1_twos.m4_reload_empty_magout",
+    "m4a1_ziptie": "m4a1_twos.m4_reload_empty_magout",
+    "so14": "ebr14.ebr14_reload_empty_magout",
+}
+
+# 分段命名的已知代际模式（{0} = 枪短名）
+_RELOAD_SOUND_PATTERNS = (
+    "{0}.reload_empty",                # 老式命名（个别枪字段空但定义仍在）
+    "{0}.{0}_reload_01",               # aek973 代：逐段编号
+    "{0}.{0}_reload_empty_magout",     # ebr14/m13b 代：逐动作命名
+    "{0}.{0}_reload_magout",
+    "{0}.{0}_reload_empty_fast_arm",   # hdr 代：fast 系逐动作
+)
+
+
+def reloadSoundCandidates(gunInfo):
+    # type: (dict) -> list
+    """
+    换弹音效候选名列表（按优先级，调用方逐个试播、命中即停）。
+
+    EP 3.5x 重制的新枪（hdr / aek973 / basp_tf / m4a1_twos 等）把换弹音改成
+    动画关键帧驱动的分段定义，JSON 的 reloadSound 字段留空——老枪字段仍有效。
+    PlayCustomMusic 对不存在的名字返回空 id 且无副作用，逐候选尝试即可。
+    bind 变体枪的音效挂在本体前缀下，gunInfo["bindName"]（若有）也参与生成。
+    """
+    candidates = []
+    sounds = (gunInfo or {}).get("reloadSound") or []
+    # 空弹匣换弹音优先（哨戒臂都是打空弹匣才换弹）
+    for idx in (1, 0):
+        if len(sounds) > idx and sounds[idx]:
+            candidates.append(sounds[idx])
+
+    shorts = []
+    for key in ("name", "bindName"):
+        value = (gunInfo or {}).get(key, "") or ""
+        short = value.split(":")[-1]
+        if short and short not in shorts:
+            shorts.append(short)
+    for short in shorts:
+        if short in _RELOAD_SOUND_OVERRIDES:
+            candidates.append(_RELOAD_SOUND_OVERRIDES[short])
+    for short in shorts:
+        for pattern in _RELOAD_SOUND_PATTERNS:
+            candidates.append(pattern.format(short))
+
+    seen = set()
+    ordered = []
+    for candidate in candidates:
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            ordered.append(candidate)
+    return ordered
 
 
 # ==================== 弹匣逐发等级记录（EP bullet_list 数字串） ====================

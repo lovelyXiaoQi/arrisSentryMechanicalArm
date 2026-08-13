@@ -96,6 +96,17 @@ def _doRegister(ext):
         if not result.get("ok"):
             print("[sentry] registerArmPoint failed: {}".format(result.get("error")))
 
+    # -------- Step 4.5: 注册漏斗/溜槽容器（v3 公共接口 funnel_containers） --------
+    # 安山/黄铜漏斗与溜槽可向哨戒臂存取弹药，门禁与动力臂交互点完全一致。
+    # transactionMode="ecs"：弹药存在本方块 SentryArmComponent 的 persistent 字段里。
+    # 服务端专属接口，客户端无需对应注册（漏斗全部逻辑在服务端）。
+    if ext.hasCapability("funnel_containers"):
+        from .SentryArmRuntimePoint import SentryArmFunnelContainer
+
+        result = ext.registerFunnelContainer(SENTRY_ARM_BLOCK, SentryArmFunnelContainer(), "ecs")
+        if not result.get("ok"):
+            print("[sentry] registerFunnelContainer failed: {}".format(result.get("error")))
+
     # -------- Step 5: 注册放置规则（主 mod 内部 API） --------
     # 顶/底面放置走主 mod 的 PlacementRulesMeta._registry（当前是私有属性，
     # 未来主 mod 可能提供公开 API，届时这里会更新）。
